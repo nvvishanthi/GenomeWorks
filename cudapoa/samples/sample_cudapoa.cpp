@@ -673,7 +673,7 @@ int main(int argc, char** argv)
                 float similarity_percentage;
                 for (int w = 0; w < number_of_windows; w++)
                 {
-                    int width = w < 9 ? 4 : w < 99 ? 3 : 2;
+                    int width = w < 9 ? 4 : w < 99 ? 3 : w < 999 ? 2 : 1;
                     std::cerr << "Consensus length for window " << w + 1 << std::left << std::setw(width) << ":"
                               << "  cudaPOA " << std::left << std::setw(20);
                     if (benchmark_mode == 1)
@@ -712,91 +712,67 @@ int main(int argc, char** argv)
             }
             if (verbose && benchmark_mode == 2)
             {
+                // print accuracy metrics
                 std::cerr << "-------------------------------------------------------------------------------------------------------------\n";
-                batch.reset(); //delete original batch object to free up memory on GPU for MSA on outputs of cudaPOA and SPOA
-                auto it_c                              = std::max_element(consensus_lengths_c.begin(), consensus_lengths_c.end());
-                auto it_s                              = std::max_element(consensus_lengths_s.begin(), consensus_lengths_s.end());
-                int32_t max_length                     = std::max(*it_c, *it_s) + 1;
-                batch_size                             = BatchSize(max_length, 2);
-                std::unique_ptr<Batch> benchmark_batch = initialize_batch(true, batch_size, false);
 
-                std::vector<std::vector<std::string>> benchmark_msa;
-                StatusType status;
-                std::vector<StatusType> status_msa, status_add;
-                for (int i = 0; i < number_of_windows;)
+                std::vector<std::vector<std::string>> consensus_results(number_of_windows);
+                for (int i = 0; i < number_of_windows; i++)
                 {
-                    Group poa_group;
-                    // Create a new entry for each consensus sequence from spoa and cudapoa and add to the group
-                    Entry poa_entry_s{};
-                    poa_entry_s.seq     = consensus_s[i].c_str();
-                    poa_entry_s.length  = consensus_lengths_s[i];
-                    poa_entry_s.weights = nullptr;
-                    poa_group.push_back(poa_entry_s);
-                    Entry poa_entry_c{};
-                    poa_entry_c.seq     = consensus_c[i].c_str();
-                    poa_entry_c.length  = consensus_lengths_c[i];
-                    poa_entry_c.weights = nullptr;
-                    poa_group.push_back(poa_entry_c);
-                    status = benchmark_batch->add_poa_group(status_add, poa_group);
-
-                    if (status == StatusType::exceeded_maximum_poas || status == StatusType::exceeded_batch_size || (i == number_of_windows - 1))
-                    {
-                        std::vector<std::vector<std::string>> temp_msa;
-                        // no more POA groups can be added to batch. Now process batch
-                        benchmark_batch.get()->generate_poa();
-                        benchmark_batch.get()->get_msa(temp_msa, status_msa);
-                        // after MSA is generated for benchmark_batch, reset benchmark_batch to make room for next set of POA groups.
-                        benchmark_batch->reset();
-                        benchmark_msa.insert(benchmark_msa.end(), temp_msa.begin(), temp_msa.end());
-                    }
-
-                    if (status == StatusType::success)
-                    {
-                        i++;
-                    }
-                    else if (status != StatusType::exceeded_maximum_poas && status != StatusType::exceeded_batch_size)
-                    {
-                        std::cerr << "Could not add POA group to batch. Error code " << status << std::endl;
-                        i++;
-                    }
+                    consensus_results[i].push_back(consensus_c[i]);
+                    consensus_results[i].push_back(consensus_s[i]);
                 }
 
+                msa_s.clear();
+                spoa_compute(consensus_results, 0, number_of_windows, number_of_threads, true, false, msa_s, consensus_s, coverage_s);
+
                 // print comparison details between cudaPOA and SPOA consensus per window
-                for (int32_t g = 0; g < get_size(benchmark_msa); g++)
+                for (int32_t g = 0; g < get_size(msa_s); g++)
                 {
-                    if (status_msa[g] != StatusType::success)
+                    int32_t insert_cntr   = 0;
+                    int32_t delete_cntr   = 0;
+                    int32_t mismatch_cntr = 0;
+                    int32_t identity_cntr = 0;
+
+                    int width = g < 9 ? 6 : g < 99 ? 5 : g < 999 ? 4 : 3;
+                    std::cerr << "Differences for window      " << g + 1 << std::left << std::setw(width) << ":";
+
+                    if (msa_s[g].size() == 2)
                     {
-                        std::cerr << "Error generating  MSA for POA group " << g << ". Error type " << status_msa[g] << std::endl;
+                        const auto& target = msa_s[g][0];
+                        const auto& query  = msa_s[g][1];
+                        if (target.length() == query.length())
+                        {
+                            for (int32_t i = 0; i < target.length(); i++)
+                            {
+                                if (target[i] == '-')
+                                    insert_cntr++;
+                                else if (query[i] == '-')
+                                    delete_cntr++;
+                                else if (target[i] != query[i])
+                                    mismatch_cntr++;
+                                else /*target[i] == query[i]*/
+                                    identity_cntr++;
+                            }
+                            float identity_percentage = 100.0f * (float)(identity_cntr) / (float)(std::min(consensus_lengths_s[g], consensus_lengths_c[g]));
+
+                            std::cerr << "indels  " << std::left << std::setw(4) << insert_cntr << "/" << std::left << std::setw(15) << delete_cntr;
+                            std::cerr << "mismatches " << std::left << std::setw(14) << mismatch_cntr;
+                            std::cerr << std::left << std::setw(3) << std::fixed << std::setprecision(0) << identity_percentage << "% identity " << std::endl;
+                        }
+                        else
+                        {
+                            std::cerr << "indels  " << std::left << std::setw(20) << "--------";
+                            std::cerr << "mismatches " << std::left << std::setw(14) << "---";
+                            std::cerr << std::left << std::setw(3) << std::fixed << std::setprecision(0) << "NA"
+                                      << "% identity " << std::endl;
+                        }
                     }
                     else
                     {
-                        int32_t insert_cntr   = 0;
-                        int32_t delete_cntr   = 0;
-                        int32_t mismatch_cntr = 0;
-                        int32_t identity_cntr = 0;
-
-                        const auto& target = benchmark_msa[g][0];
-                        const auto& query  = benchmark_msa[g][1];
-                        assert(target.length() == query.length());
-                        for (int32_t i = 0; i < target.length(); i++)
-                        {
-                            if (target[i] == '-')
-                                insert_cntr++;
-                            else if (query[i] == '-')
-                                delete_cntr++;
-                            else if (target[i] != query[i])
-                                mismatch_cntr++;
-                            else /*target[i] == query[i]*/
-                                identity_cntr++;
-                        }
-
-                        float identity_percentage = 100.0f * (float)(identity_cntr) / (float)(std::min(consensus_lengths_s[g], consensus_lengths_c[g]));
-
-                        int width = g < 9 ? 6 : g < 99 ? 5 : 4;
-                        std::cerr << "Differences for window      " << g + 1 << std::left << std::setw(width) << ":";
-                        std::cerr << "indels  " << std::left << std::setw(4) << insert_cntr << "/" << std::left << std::setw(15) << delete_cntr;
-                        std::cerr << "mismatches " << std::left << std::setw(14) << mismatch_cntr;
-                        std::cerr << std::left << std::setw(3) << std::fixed << std::setprecision(0) << identity_percentage << "% identity " << std::endl;
+                        std::cerr << "indels  " << std::left << std::setw(20) << "--------";
+                        std::cerr << "mismatches " << std::left << std::setw(14) << "---";
+                        std::cerr << std::left << std::setw(3) << std::fixed << std::setprecision(0) << "NA"
+                                  << "% identity " << std::endl;
                     }
                 }
             }
