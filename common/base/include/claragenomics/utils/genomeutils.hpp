@@ -105,7 +105,7 @@ inline std::string generate_random_sequence(const std::string& backbone, std::mi
             }
         }
 
-        if (start_index < sequence.length())
+        if (start_index < (int)sequence.length())
         {
             sequence.replace(start_index, range_length, substring);
         }
