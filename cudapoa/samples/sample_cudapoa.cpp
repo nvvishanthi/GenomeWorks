@@ -459,8 +459,6 @@ int main(int argc, char** argv)
 
     // Loop over all the POA groups, add them to the batch and process them.
     int32_t window_count = 0;
-    // to avoid potential infinite loop
-    int32_t error_count = 0;
     // for benchmarking
     float cudapoa_time = 0.f;
     float spoa_time    = 0.f;
@@ -496,52 +494,68 @@ int main(int argc, char** argv)
         // once last window is added to batch.
         if (status == StatusType::exceeded_maximum_poas || status == StatusType::exceeded_batch_size || (i == get_size(windows) - 1))
         {
-            // No more POA groups can be added to batch. Now process batch.
-            if (benchmark)
+            if(batch->get_total_poas()>0)
             {
-                if (benchmark_mode != 1)
+                // No more POA groups can be added to batch. Now process batch.
+                if (benchmark)
                 {
-                    timer.start_timer();
+                    if (benchmark_mode != 1)
+                    {
+                        timer.start_timer();
+                        process_batch(batch.get(), msa_flag, print, msa_c, consensus_c, coverage_c);
+                        cudapoa_time += timer.stop_timer();
+                    }
+
+                    if (benchmark_mode != 0)
+                    {
+                        timer.start_timer();
+                        spoa_compute(windows, window_count, window_count + batch->get_total_poas(), number_of_threads, msa_flag, print, msa_s, consensus_s, coverage_s);
+                        spoa_time += timer.stop_timer();
+                    }
+                }
+                else
+                {
                     process_batch(batch.get(), msa_flag, print, msa_c, consensus_c, coverage_c);
-                    cudapoa_time += timer.stop_timer();
                 }
 
-                if (benchmark_mode != 0)
+                if (print_graph && long_read)
                 {
-                    timer.start_timer();
-                    spoa_compute(windows, window_count, window_count + batch->get_total_poas(), number_of_threads, msa_flag, print, msa_s, consensus_s, coverage_s);
-                    spoa_time += timer.stop_timer();
+                    std::vector<DirectedGraph> graph;
+                    std::vector<StatusType> graph_status;
+                    batch->get_graphs(graph, graph_status);
+                    for (auto& g : graph)
+                    {
+                        std::cout << g.serialize_to_dot() << std::endl;
+                    }
+                }
+
+                // After MSA/consensus is generated for batch, reset batch to make room for next set of POA groups.
+                batch->reset();
+
+                // In case that number of windows is more than the capacity available on GPU, the for loop breaks into smaller number of windows.
+                // if adding window i in batch->add_poa_group is not successful, it wont be processed in this iteration, therefore we print i-1
+                // to account for the fact that window i was excluded at this round.
+                if (status == StatusType::success)
+                {
+                    std::cout << "Processed windows " << window_count << " - " << i << std::endl;
+                }
+                else
+                {
+                    std::cout << "Processed windows " << window_count << " - " << i - 1 << std::endl;
                 }
             }
             else
             {
-                process_batch(batch.get(), msa_flag, print, msa_c, consensus_c, coverage_c);
-            }
-
-            if (print_graph && long_read)
-            {
-                std::vector<DirectedGraph> graph;
-                std::vector<StatusType> graph_status;
-                batch->get_graphs(graph, graph_status);
-                for (auto& g : graph)
+                // the POA was too large to be added to the GPU, skip and move on
+                std::cout << "Could not add POA group " << i << " to batch. Error code " << status << std::endl;
+                if (benchmark)
                 {
-                    std::cout << g.serialize_to_dot() << std::endl;
+                    if (benchmark_mode != 1)
+                        consensus_c.push_back("");
+                    if (benchmark_mode != 0)
+                        consensus_s.push_back("");
                 }
-            }
-
-            // After MSA/consensus is generated for batch, reset batch to make room for next set of POA groups.
-            batch->reset();
-
-            // In case that number of windows is more than the capacity available on GPU, the for loop breaks into smaller number of windows.
-            // if adding window i in batch->add_poa_group is not successful, it wont be processed in this iteration, therefore we print i-1
-            // to account for the fact that window i was excluded at this round.
-            if (status == StatusType::success)
-            {
-                std::cout << "Processed windows " << window_count << " - " << i << std::endl;
-            }
-            else
-            {
-                std::cout << "Processed windows " << window_count << " - " << i - 1 << std::endl;
+                i++;
             }
 
             window_count = i;
@@ -562,10 +576,15 @@ int main(int argc, char** argv)
 
         if (status != StatusType::exceeded_maximum_poas && status != StatusType::exceeded_batch_size && status != StatusType::success)
         {
-            std::cerr << "Could not add POA group to batch. Error code " << status << std::endl;
-            error_count++;
-            if (error_count > get_size(windows))
-                break;
+            std::cerr << "Could not add POA group " << i << " to batch. Error code " << status << std::endl;
+            i++;
+            if (benchmark)
+            {
+                if (benchmark_mode != 1)
+                    consensus_c.push_back("");
+                if (benchmark_mode != 0)
+                    consensus_s.push_back("");
+            }
         }
     }
 
