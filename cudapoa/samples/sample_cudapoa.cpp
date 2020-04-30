@@ -494,7 +494,7 @@ int main(int argc, char** argv)
         // once last window is added to batch.
         if (status == StatusType::exceeded_maximum_poas || status == StatusType::exceeded_batch_size || (i == get_size(windows) - 1))
         {
-            if(batch->get_total_poas()>0)
+            if (batch->get_total_poas() > 0)
             {
                 // No more POA groups can be added to batch. Now process batch.
                 if (benchmark)

@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <string>
 #include <iostream>
+#include <iomanip>
 #include <cuda_runtime_api.h>
 
 #ifndef TABS
@@ -149,7 +150,7 @@ public:
     {
         scoped_device_switch dev(device_id_);
 
-        if(poa_count_ == 0)
+        if (poa_count_ == 0)
         {
             print_batch_debug_message(" No POA was added to compute! ");
             return;
@@ -544,6 +545,12 @@ protected:
 
         if (scores_size > avail_scorebuf_mem_)
         {
+            if (get_total_poas() == 0)
+            {
+                std::cout << "Memory available " << std::fixed << std::setprecision(2) << ((double)avail_scorebuf_mem_) / 1024. / 1024. / 1024.;
+                std::cout << "GB, Memory required " << ((double)scores_size) / 1024. / 1024. / 1024.;
+                std::cout << "GB, graph length " << max_graph_dimension << " score width " << scores_width << std::endl;
+            }
             return false;
         }
         else
