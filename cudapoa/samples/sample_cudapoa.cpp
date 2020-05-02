@@ -599,15 +599,16 @@ int main(int argc, char** argv)
         }
     }
 
-
     // analyze the windows and create a minimal set of batches to process them all
     std::vector<BatchSize> list_of_batch_sizes;
     std::vector<std::vector<size_t>> list_of_windows_per_batch;
     generate_batch_sizes(windows, banded, msa, list_of_batch_sizes, list_of_windows_per_batch);
 
-    for(size_t b = 0; b < list_of_batch_sizes.size(); b++)
+    int32_t window_count_offset = 0;
+
+    for (size_t b = 0; b < list_of_batch_sizes.size(); b++)
     {
-        auto& batch_size = list_of_batch_sizes[b];
+        auto& batch_size    = list_of_batch_sizes[b];
         auto& batch_windows = list_of_windows_per_batch[b];
 
         // Initialize batch.
@@ -693,24 +694,24 @@ int main(int argc, char** argv)
                     // to account for the fact that window i was excluded at this round.
                     if (status == StatusType::success)
                     {
-                        std::cout << "Processed windows " << window_count << " - " << i << " (batch " << b << ")" << std::endl;
+                        std::cout << "Processed windows " << window_count + window_count_offset << " - " << i + window_count_offset << " (batch " << b << ")" << std::endl;
                     }
                     else
                     {
-                        std::cout << "Processed windows " << window_count << " - " << i - 1 << " (batch " << b << ")" << std::endl;
+                        std::cout << "Processed windows " << window_count + window_count_offset << " - " << i - 1 + window_count_offset << " (batch " << b << ")" << std::endl;
                     }
                 }
                 else
                 {
                     // the POA was too large to be added to the GPU, skip and move on
-                std::cout << "Could not add POA group " << i << " (batch " << b << ") to batch. Error code " << status << std::endl;
-                if (benchmark)
-                {
-                    if (benchmark_mode != 1)
-                        consensus_c.push_back("");
-                    if (benchmark_mode != 0)
-                        consensus_s.push_back("");
-                }
+                    std::cout << "Could not add POA group " << i + window_count_offset << " (batch " << b << ") to batch. Error code " << status << std::endl;
+                    if (benchmark)
+                    {
+                        if (benchmark_mode != 1)
+                            consensus_c.push_back("");
+                        if (benchmark_mode != 0)
+                            consensus_s.push_back("");
+                    }
                     i++;
                 }
 
@@ -732,7 +733,7 @@ int main(int argc, char** argv)
 
         if (status != StatusType::exceeded_maximum_poas && status != StatusType::exceeded_batch_size && status != StatusType::success)
             {
-                std::cerr << "Could not add POA group " << i << " (batch " << b << ") to batch. Error code " << status << std::endl;
+                std::cout << "Could not add POA group " << i + window_count_offset << " (batch " << b << ") to batch. Error code " << status << std::endl;
                 i++;
             if (benchmark)
             {
@@ -955,6 +956,7 @@ int main(int argc, char** argv)
         std::cerr << "=============================================================================================================\n\n";
         }
 
+        window_count_offset += get_size(batch_windows);
     }
 
     return 0;
