@@ -530,7 +530,7 @@ int main(int argc, char** argv)
         std::cout << "-t : Maximum number of threads used in SPOA benchmarking (if not provided, will default to number of logical CPUs)" << std::endl;
         std::cout << "-B : cudaPOA is computed as banded" << std::endl;
         std::cout << "-W : Number of total windows used in benchmarking" << std::endl;
-        std::cout << "-S : Maximum sequence length in benchmarking" << std::endl;
+        std::cout << "-S : Maximum sequence length in benchmarking (only used along -R option for simulated long reads)" << std::endl;
         std::cout << "-N : Number of sequences per POA group" << std::endl;
         std::cout << "-R : For long-read use simulated random sequences (default uses data from bonito basecaller for Oxford Nanopore reads)" << std::endl;
         std::cout << "-M : 0, 1, [2]. Only used in benchmark mode: -M 0, runs only cudaPOA, -M 1, runs only SPOA, -M 2, default, runs both" << std::endl;
@@ -541,7 +541,7 @@ int main(int argc, char** argv)
 
     // if not defined as input args, set default values for benchmarking parameters
     number_of_windows = number_of_windows == 0 ? (long_read ? 10 : 1000) : number_of_windows;
-    sequence_size     = sequence_size == 0 ? (long_read ? 10000 : 1024) : sequence_size;
+    sequence_size     = sequence_size == 0 ? (long_read ? 10000 : 1024) : sequence_size; // sequence size is used only for simulated long reads
     group_size        = group_size == 0 ? (long_read ? 6 : 100) : group_size;
     number_of_threads = number_of_threads == 0 ? (int32_t)omp_get_num_procs() : number_of_threads;
 
@@ -590,48 +590,59 @@ int main(int argc, char** argv)
         if (long_read)
         {
             const std::string input_file = std::string(CUDAPOA_BENCHMARK_DATA_DIR) + "/sample-bonito.txt";
-            generate_window_data(input_file, 8, 6, windows, batch_size);
+            generate_window_data(input_file, number_of_windows, 6, windows, batch_size);
         }
         else
         {
             const std::string input_file = std::string(CUDAPOA_BENCHMARK_DATA_DIR) + "/sample-windows.txt";
-            generate_window_data(input_file, 1000, 100, windows, batch_size);
+            generate_window_data(input_file, number_of_windows, 100, windows, batch_size);
         }
     }
 
-    // analyze the windows and create a minimal set of batches to process them all
+    // analyze all the windows and create an optimal set of batche sizes to process them
     std::vector<BatchSize> list_of_batch_sizes;
     std::vector<std::vector<size_t>> list_of_windows_per_batch;
     generate_batch_sizes(windows, banded, msa, list_of_batch_sizes, list_of_windows_per_batch);
 
     int32_t window_count_offset = 0;
 
-    for (size_t b = 0; b < list_of_batch_sizes.size(); b++)
-    {
-        auto& batch_size    = list_of_batch_sizes[b];
-        auto& batch_windows = list_of_windows_per_batch[b];
-
-        // Initialize batch.
-    std::unique_ptr<Batch> batch = initialize_batch(msa_flag, batch_size, banded);
-
-        // Loop over all the POA groups for the current batch, add them to the batch and process them.
-        int32_t window_count = 0;
     // for benchmarking
     float cudapoa_time = 0.f;
     float spoa_time    = 0.f;
     ChronoTimer timer;
 
-    // results vectors
-    std::vector<std::vector<std::string>> msa_c;   // MSA per group, for cudapoa
-    std::vector<std::string> consensus_c;          // Consensus string for each POA group, for cudapoa
-    std::vector<std::vector<uint16_t>> coverage_c; // Per base coverage for each consensus, for cudapoa
-    std::vector<std::vector<std::string>> msa_s;   // MSA per group, for spoa
-    std::vector<std::string> consensus_s;          // Consensus string for each POA group, for spoa
-    std::vector<std::vector<uint32_t>> coverage_s; // Per base coverage for each consensus, for spoa
+    // results vectors for all batches
+    std::vector<std::vector<std::string>> msa_c(number_of_windows);   // MSA per group, for cudapoa
+    std::vector<std::string> consensus_c(number_of_windows);          // Consensus string for each POA group, for cudapoa
+    std::vector<std::vector<uint16_t>> coverage_c(number_of_windows); // Per base coverage for each consensus, for cudapoa
+    std::vector<std::vector<std::string>> msa_s(number_of_windows);   // MSA per group, for spoa
+    std::vector<std::string> consensus_s(number_of_windows);          // Consensus string for each POA group, for spoa
+    std::vector<std::vector<uint32_t>> coverage_s(number_of_windows); // Per base coverage for each consensus, for spoa
 
-        for (int32_t i = 0; i < get_size(batch_windows);)
+    // Loop over all the POA groups for the current batch, add them to the batch and process them.
+    for (size_t b = 0; b < list_of_batch_sizes.size(); b++)
+    {
+        auto& batch_size = list_of_batch_sizes[b];
+        auto& window_ids = list_of_windows_per_batch[b];
+
+        // Initialize batch.
+        std::unique_ptr<Batch> batch = initialize_batch(msa_flag, batch_size, banded);
+
+        // Set of batch windows for SPOA
+        std::vector<std::vector<std::string>> spoa_batch(get_size(window_ids));
+
+        // results vectors for batch
+        std::vector<std::vector<std::string>> batch_msa_c;   // MSA per group, for cudapoa
+        std::vector<std::string> batch_consensus_c;          // Consensus string for each POA group, for cudapoa
+        std::vector<std::vector<uint16_t>> batch_coverage_c; // Per base coverage for each consensus, for cudapoa
+        std::vector<std::vector<std::string>> batch_msa_s;   // MSA per group, for spoa
+        std::vector<std::string> batch_consensus_s;          // Consensus string for each POA group, for spoa
+        std::vector<std::vector<uint32_t>> batch_coverage_s; // Per base coverage for each consensus, for spoa
+
+        int32_t window_count = 0;
+        for (int32_t i = 0; i < get_size(window_ids);)
         {
-            const std::vector<std::string>& window = windows[batch_windows[i]];
+            const std::vector<std::string>& window = windows[window_ids[i]];
 
             Group poa_group;
             // Create a new entry for each sequence and add to the group.
@@ -644,36 +655,40 @@ int main(int argc, char** argv)
                 poa_group.push_back(poa_entry);
             }
 
+            // add windows for cudapoa batch
             std::vector<StatusType> seq_status;
             StatusType status = batch->add_poa_group(seq_status, poa_group);
 
+            // add windows for spoa batch
+            spoa_batch[i] = window;
+
             // NOTE: If number of batch windows smaller than batch capacity, then run POA generation
             // once last window is added to batch.
-        if (status == StatusType::exceeded_maximum_poas || status == StatusType::exceeded_batch_size || (i == get_size(batch_windows) - 1))
+            if (status == StatusType::exceeded_maximum_poas || status == StatusType::exceeded_batch_size || (i == get_size(window_ids) - 1))
             {
                 if (batch->get_total_poas() > 0)
                 {
                     // No more POA groups can be added to batch. Now process batch.
-                if (benchmark)
-                {
-                    if (benchmark_mode != 1)
+                    if (benchmark)
                     {
-                        timer.start_timer();
-                        process_batch(batch.get(), msa_flag, print, msa_c, consensus_c, coverage_c);
-                        cudapoa_time += timer.stop_timer();
-                    }
+                        if (benchmark_mode != 1)
+                        {
+                            timer.start_timer();
+                            process_batch(batch.get(), msa_flag, print, batch_msa_c, batch_consensus_c, batch_coverage_c);
+                            cudapoa_time += timer.stop_timer();
+                        }
 
-                    if (benchmark_mode != 0)
-                    {
-                        timer.start_timer();
-                        spoa_compute(windows, window_count, window_count + batch->get_total_poas(), number_of_threads, msa_flag, print, msa_s, consensus_s, coverage_s);
-                        spoa_time += timer.stop_timer();
+                        if (benchmark_mode != 0)
+                        {
+                            timer.start_timer();
+                            spoa_compute(spoa_batch, window_count, window_count + batch->get_total_poas(), number_of_threads, msa_flag, print, batch_msa_s, batch_consensus_s, batch_coverage_s);
+                            spoa_time += timer.stop_timer();
+                        }
                     }
-                }
-                else
-                {
-                    process_batch(batch.get(), msa_flag, print, msa_c, consensus_c, coverage_c);
-                }
+                    else
+                    {
+                        process_batch(batch.get(), msa_flag, print, batch_msa_c, batch_consensus_c, batch_coverage_c);
+                    }
 
                     if (print_graph && long_read)
                     {
@@ -708,9 +723,9 @@ int main(int argc, char** argv)
                     if (benchmark)
                     {
                         if (benchmark_mode != 1)
-                            consensus_c.push_back("");
+                            batch_consensus_c.push_back("");
                         if (benchmark_mode != 0)
-                            consensus_s.push_back("");
+                            batch_consensus_s.push_back("");
                     }
                     i++;
                 }
@@ -731,20 +746,71 @@ int main(int argc, char** argv)
                 i++;
             }
 
-        if (status != StatusType::exceeded_maximum_poas && status != StatusType::exceeded_batch_size && status != StatusType::success)
+            if (status != StatusType::exceeded_maximum_poas && status != StatusType::exceeded_batch_size && status != StatusType::success)
             {
                 std::cout << "Could not add POA group " << i + window_count_offset << " (batch " << b << ") to batch. Error code " << status << std::endl;
                 i++;
+                if (benchmark)
+                {
+                    if (benchmark_mode != 1)
+                        batch_consensus_c.push_back("");
+                    if (benchmark_mode != 0)
+                        batch_consensus_s.push_back("");
+                }
+            }
+        }
+
+        // add batch results to the global results vectors
+
+        for (int32_t i = 0; i < get_size(window_ids); i++)
+        {
+            int id = window_ids[i];
             if (benchmark)
             {
                 if (benchmark_mode != 1)
-                    consensus_c.push_back("");
+                {
+                    if (msa_flag)
+                    {
+                        msa_c[id] = batch_msa_c[i];
+                    }
+                    else
+                    {
+                        consensus_c[id] = batch_consensus_c[i];
+                        //coverage_c[id]  = batch_coverage_c[i];
+                    }
+                }
+
                 if (benchmark_mode != 0)
-                    consensus_s.push_back("");
+                {
+                    if (msa_flag)
+                    {
+                        msa_s[id] = batch_msa_s[i];
+                    }
+                    else
+                    {
+                        consensus_s[id] = batch_consensus_s[i];
+                        //coverage_s[id]  = batch_coverage_s[i];
+                    }
+                }
+            }
+            else
+            {
+                if (msa_flag)
+                {
+                    msa_c[id] = batch_msa_c[i];
+                }
+                else
+                {
+                    consensus_c[id] = batch_consensus_c[i];
+                    //coverage_c[id]  = batch_coverage_c[i];
+                }
             }
         }
+
+        window_count_offset += get_size(window_ids);
     }
 
+    //=================================================================================================================================
     // print benchmarking report
     if (benchmark)
     {
@@ -761,7 +827,7 @@ int main(int argc, char** argv)
                 std::cerr << " bonito";
             else
                 std::cerr << " simulated";
-            }
+        }
         else
         {
             std::cerr << " short";
@@ -954,9 +1020,6 @@ int main(int argc, char** argv)
             }
         }
         std::cerr << "=============================================================================================================\n\n";
-        }
-
-        window_count_offset += get_size(batch_windows);
     }
 
     return 0;
