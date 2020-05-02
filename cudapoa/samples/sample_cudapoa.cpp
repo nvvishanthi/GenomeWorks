@@ -305,7 +305,7 @@ size_t estimate_max_poas(const BatchSize& batch_size, const bool banded_alignmen
 }
 
 void generate_batch_sizes(const std::vector<std::vector<std::string>>& windows, const bool banded_alignment, const bool msa_flag,
-                          std::vector<BatchSize>& list_of_batches, std::vector<std::vector<size_t>>& list_of_windows_per_batch)
+                          std::vector<BatchSize>& list_of_batch_sizes, std::vector<std::vector<size_t>>& list_of_windows_per_batch)
 {
     // got through all the windows and evaluate maximum number of POAs of that size where can be processed in a single batch
     size_t num_windows = windows.size();
@@ -372,13 +372,13 @@ void generate_batch_sizes(const std::vector<std::vector<std::string>>& windows, 
     {
         if (bins_frequency[j] > 0)
         {
-            list_of_batches.emplace_back(bins_max_length[j], bins_num_reads[j]);
+            list_of_batch_sizes.emplace_back(bins_max_length[j], bins_num_reads[j]);
             list_of_windows_per_batch.push_back(bins_window_list[j]);
             remaining_windows -= bins_frequency[j];
             if (bins_ranges[j] > remaining_windows)
             {
                 auto& remaining_list = list_of_windows_per_batch.back();
-                for (auto it = bins_window_list.begin() + j; it != bins_window_list.end(); it++)
+                for (auto it = bins_window_list.begin() + j + 1; it != bins_window_list.end(); it++)
                 {
                     remaining_list.insert(remaining_list.end(), it->begin(), it->end());
                 }
@@ -599,11 +599,22 @@ int main(int argc, char** argv)
         }
     }
 
-    // Initialize batch.
+
+    // analyze the windows and create a minimal set of batches to process them all
+    std::vector<BatchSize> list_of_batch_sizes;
+    std::vector<std::vector<size_t>> list_of_windows_per_batch;
+    generate_batch_sizes(windows, banded, msa, list_of_batch_sizes, list_of_windows_per_batch);
+
+    for(size_t b = 0; b < list_of_batch_sizes.size(); b++)
+    {
+        auto& batch_size = list_of_batch_sizes[b];
+        auto& batch_windows = list_of_windows_per_batch[b];
+
+        // Initialize batch.
     std::unique_ptr<Batch> batch = initialize_batch(msa_flag, batch_size, banded);
 
-    // Loop over all the POA groups, add them to the batch and process them.
-    int32_t window_count = 0;
+        // Loop over all the POA groups for the current batch, add them to the batch and process them.
+        int32_t window_count = 0;
     // for benchmarking
     float cudapoa_time = 0.f;
     float spoa_time    = 0.f;
@@ -617,31 +628,31 @@ int main(int argc, char** argv)
     std::vector<std::string> consensus_s;          // Consensus string for each POA group, for spoa
     std::vector<std::vector<uint32_t>> coverage_s; // Per base coverage for each consensus, for spoa
 
-    for (int32_t i = 0; i < get_size(windows);)
-    {
-        const std::vector<std::string>& window = windows[i];
-
-        Group poa_group;
-        // Create a new entry for each sequence and add to the group.
-        for (const auto& seq : window)
+        for (int32_t i = 0; i < get_size(batch_windows);)
         {
-            Entry poa_entry{};
-            poa_entry.seq     = seq.c_str();
-            poa_entry.length  = seq.length();
-            poa_entry.weights = nullptr;
-            poa_group.push_back(poa_entry);
-        }
+            const std::vector<std::string>& window = windows[batch_windows[i]];
 
-        std::vector<StatusType> seq_status;
-        StatusType status = batch->add_poa_group(seq_status, poa_group);
-
-        // NOTE: If number of windows smaller than batch capacity, then run POA generation
-        // once last window is added to batch.
-        if (status == StatusType::exceeded_maximum_poas || status == StatusType::exceeded_batch_size || (i == get_size(windows) - 1))
-        {
-            if (batch->get_total_poas() > 0)
+            Group poa_group;
+            // Create a new entry for each sequence and add to the group.
+            for (const auto& seq : window)
             {
-                // No more POA groups can be added to batch. Now process batch.
+                Entry poa_entry{};
+                poa_entry.seq     = seq.c_str();
+                poa_entry.length  = seq.length();
+                poa_entry.weights = nullptr;
+                poa_group.push_back(poa_entry);
+            }
+
+            std::vector<StatusType> seq_status;
+            StatusType status = batch->add_poa_group(seq_status, poa_group);
+
+            // NOTE: If number of batch windows smaller than batch capacity, then run POA generation
+            // once last window is added to batch.
+        if (status == StatusType::exceeded_maximum_poas || status == StatusType::exceeded_batch_size || (i == get_size(batch_windows) - 1))
+            {
+                if (batch->get_total_poas() > 0)
+                {
+                    // No more POA groups can be added to batch. Now process batch.
                 if (benchmark)
                 {
                     if (benchmark_mode != 1)
@@ -663,36 +674,36 @@ int main(int argc, char** argv)
                     process_batch(batch.get(), msa_flag, print, msa_c, consensus_c, coverage_c);
                 }
 
-                if (print_graph && long_read)
-                {
-                    std::vector<DirectedGraph> graph;
-                    std::vector<StatusType> graph_status;
-                    batch->get_graphs(graph, graph_status);
-                    for (auto& g : graph)
+                    if (print_graph && long_read)
                     {
-                        std::cout << g.serialize_to_dot() << std::endl;
+                        std::vector<DirectedGraph> graph;
+                        std::vector<StatusType> graph_status;
+                        batch->get_graphs(graph, graph_status);
+                        for (auto& g : graph)
+                        {
+                            std::cout << g.serialize_to_dot() << std::endl;
+                        }
                     }
-                }
 
-                // After MSA/consensus is generated for batch, reset batch to make room for next set of POA groups.
-                batch->reset();
+                    // After MSA/consensus is generated for batch, reset batch to make room for next set of POA groups.
+                    batch->reset();
 
-                // In case that number of windows is more than the capacity available on GPU, the for loop breaks into smaller number of windows.
-                // if adding window i in batch->add_poa_group is not successful, it wont be processed in this iteration, therefore we print i-1
-                // to account for the fact that window i was excluded at this round.
-                if (status == StatusType::success)
-                {
-                    std::cout << "Processed windows " << window_count << " - " << i << std::endl;
+                    // In case that number of batch windows is more than the capacity available on GPU, the for loop breaks into smaller number of windows.
+                    // if adding window i in batch->add_poa_group is not successful, it wont be processed in this iteration, therefore we print i-1
+                    // to account for the fact that window i was excluded at this round.
+                    if (status == StatusType::success)
+                    {
+                        std::cout << "Processed windows " << window_count << " - " << i << " (batch " << b << ")" << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "Processed windows " << window_count << " - " << i - 1 << " (batch " << b << ")" << std::endl;
+                    }
                 }
                 else
                 {
-                    std::cout << "Processed windows " << window_count << " - " << i - 1 << std::endl;
-                }
-            }
-            else
-            {
-                // the POA was too large to be added to the GPU, skip and move on
-                std::cout << "Could not add POA group " << i << " to batch. Error code " << status << std::endl;
+                    // the POA was too large to be added to the GPU, skip and move on
+                std::cout << "Could not add POA group " << i << " (batch " << b << ") to batch. Error code " << status << std::endl;
                 if (benchmark)
                 {
                     if (benchmark_mode != 1)
@@ -700,29 +711,29 @@ int main(int argc, char** argv)
                     if (benchmark_mode != 0)
                         consensus_s.push_back("");
                 }
+                    i++;
+                }
+
+                window_count = i;
+            }
+
+            if (status == StatusType::success)
+            {
+                // Check if all sequences in POA group wre added successfully.
+                for (const auto& s : seq_status)
+                {
+                    if (s == StatusType::exceeded_maximum_sequence_size)
+                    {
+                        std::cerr << "Dropping sequence because sequence exceeded maximum size" << std::endl;
+                    }
+                }
                 i++;
             }
 
-            window_count = i;
-        }
-
-        if (status == StatusType::success)
-        {
-            // Check if all sequences in POA group wre added successfully.
-            for (const auto& s : seq_status)
-            {
-                if (s == StatusType::exceeded_maximum_sequence_size)
-                {
-                    std::cerr << "Dropping sequence because sequence exceeded maximum size" << std::endl;
-                }
-            }
-            i++;
-        }
-
         if (status != StatusType::exceeded_maximum_poas && status != StatusType::exceeded_batch_size && status != StatusType::success)
-        {
-            std::cerr << "Could not add POA group " << i << " to batch. Error code " << status << std::endl;
-            i++;
+            {
+                std::cerr << "Could not add POA group " << i << " (batch " << b << ") to batch. Error code " << status << std::endl;
+                i++;
             if (benchmark)
             {
                 if (benchmark_mode != 1)
@@ -749,7 +760,7 @@ int main(int argc, char** argv)
                 std::cerr << " bonito";
             else
                 std::cerr << " simulated";
-        }
+            }
         else
         {
             std::cerr << " short";
@@ -942,6 +953,8 @@ int main(int argc, char** argv)
             }
         }
         std::cerr << "=============================================================================================================\n\n";
+        }
+
     }
 
     return 0;
