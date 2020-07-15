@@ -74,6 +74,7 @@ set_target_properties(cudamapper-bin PROPERTIES OUTPUT_NAME cudamapper)
 
 # Add tests folder
 add_subdirectory(tests)
+add_subdirectory(samples)
 
 install(TARGETS cudamapper
     EXPORT cudamapper

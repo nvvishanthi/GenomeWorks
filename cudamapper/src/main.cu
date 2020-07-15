@@ -118,7 +118,7 @@ void run_alignment_batch(DefaultDeviceAllocator allocator,
     GW_CU_CHECK_ERR(cudaStreamDestroy(stream));
 }
 
-/// \brief performs gloval alignment between overlapped regions of reads
+/// \brief performs global alignment between overlapped regions of reads
 /// \param overlaps List of overlaps to align
 /// \param query_parser Parser for query reads
 /// \param target_parser Parser for target reads
