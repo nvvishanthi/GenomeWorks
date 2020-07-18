@@ -12,6 +12,8 @@
 #include <claraparabricks/genomeworks/io/fasta_parser.hpp> // may not need this
 #include <claraparabricks/genomeworks/utils/cudautils.hpp>
 #include <claraparabricks/genomeworks/utils/signed_integer_utils.hpp>
+#include "../src/index_descriptor.hpp"
+#include "../src/overlapper_triggered.hpp"
 #include <cudamapper_file_location.hpp>
 
 #include <claraparabricks/genomeworks/cudamapper/index.hpp>
@@ -48,6 +50,11 @@ using namespace  claraparabricks::genomeworks::cudamapper;
 
 //     return std::move(batch);
 // }
+
+void process_batch()
+{
+    return;
+}
 
 void print_overlaps(const std::vector<Overlap>& overlaps,
                const io::FastaParser& query_parser,
@@ -153,7 +160,7 @@ int main(int argc, char** argv)
 
 
     // abstract the batchs setup into initialize_batch()
-    // Maybe the wrong type?
+    // BEGIN intialize_batch
     // std::unique_ptr<Index> batch = initialize_batch(); // fix this
 
     // create FASTA parser here
@@ -161,34 +168,35 @@ int main(int argc, char** argv)
     uint32_t windows_size = 10;
     std::shared_ptr<io::FastaParser> query_parser;
     std::shared_ptr<io::FastaParser> target_parser;
-    query_parser = io::create_kseq_fasta_parser(query_file, kmer_size + windows_size - 1);   // defaults taken from application parser
+    query_parser = io::create_kseq_fasta_parser(query_file, 1, false);   // defaults taken from application parser
     // assume all-to-all
     target_parser = query_parser;
 
     // group reads into indices
-    // Split work into batches
-    // std::vector<BatchOfIndices> batches_of_indices_vect = generate_batches_of_indices(10,
-    //                                                                                   5,
-    //                                                                                   10,
-    //                                                                                   5,
-    //                                                                                   query_parser,
-    //                                                                                   target_parser,
-    //                                                                                   30 * 1'000'000,        // value was in MB
-    //                                                                                   30 * 1'000'000, // value was in MB
-    //                                                                                   true); //all to all mode
-    // split indices into IndexDescriptors
+
+    // split indices into IndexDescriptors - these two pieces make up a single batch. This hsould be fine as.
     std::vector<IndexDescriptor> query_index_descriptors  = group_reads_into_indices(*query_parser,
-                                                                                    query_basepairs_per_index);
+                                                                                    30 * 1'000'000);
     std::vector<IndexDescriptor> target_index_descriptors = group_reads_into_indices(*target_parser,
-                                                                                     target_basepairs_per_index);
+                                                                                     30 * 1'000'000);
 
 
-    // generate indices this happens after the index_descriptor stuff above
-    std::unique_ptr<Index> query_index   = Index::create_index(allocator, *query_parser, 0, 0, kmer_size, windows_size); // leave other default arguments as-is
-    std::unique_ptr<Index> target_index  = Index::create_index(allocator, *target_parser, 0, 0, kmer_size, windows_size); // leave other default arguments as-is
+    // might need to duplicate the above to for the device.. maybe not?
 
-    // // single thread, single stream
-    // // we only need a single stream here, bc I suppose only 1 GPU is needed? 
+    // END initialize_batch
+
+    std::unique_ptr<Index> query_index  = Index::create_index(allocator,
+                                                              *query_parser,
+                                                              query_index_descriptors[0].first_read(),
+                                                              query_index_descriptors[0].first_read() + query_index_descriptors[0].number_of_reads(),
+                                                              kmer_size,
+                                                              windows_size);   // leave other default arguments as-is
+    std::unique_ptr<Index> target_index = Index::create_index(allocator,
+                                                              *target_parser,
+                                                              target_index_descriptors[0].first_read(),
+                                                              target_index_descriptors[0].first_read() + target_index_descriptors[0].number_of_reads(),
+                                                              kmer_size,
+                                                              windows_size);   // leave other default arguments as-is
 
     // // TODO VI: Abstract the following to process_batch function?
     // // for each pair of indices, find anchors & find overlaps
@@ -198,21 +206,21 @@ int main(int argc, char** argv)
 
     //Overlapper overlapper(allocator);
     std::vector<Overlap> overlaps;
-    // Overlapper::get_overlaps(overlaps,
-    //                          matcher->anchors(),
-    //                          3, // min_residues default value
-    //                          250,
-    //                          1000,
-    //                          0.8);
+    OverlapperTriggered overlapper(allocator);
+
+    int32_t min_residues                    = 3;     // r, recommended range: 1 - 10. Higher: more accurate. Lower: more sensitive
+    int32_t min_overlap_len                 = 250;   // l, recommended range: 100 - 1000
+    int32_t min_bases_per_residue           = 1000;  // b
+    float min_overlap_fraction              = 0.8;   // z
+    overlapper.get_overlaps(overlaps,
+                            matcher->anchors(),
+                            min_residues,
+                            min_overlap_len,
+                            min_bases_per_residue,
+                            min_overlap_fraction);
 
     // reset the matcher
     matcher.reset(nullptr);
-    // overlapper.get_overlaps(overlaps,
-    //                         matcher->anchors(),
-    //                         application_parameters.min_residues,
-    //                         application_parameters.min_overlap_len,
-    //                         application_parameters.min_bases_per_residue,
-    //                         application_parameters.min_overlap_fraction);
 
     // post process the overlaps
     Overlapper::post_process_overlaps(overlaps);
