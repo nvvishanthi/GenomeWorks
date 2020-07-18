@@ -406,7 +406,7 @@ void worker_thread_function(const int32_t device_id,
     IndexCacheDevice device_cache(application_parameters.all_to_all,
                                   host_cache);
 
-    // data structure used to exchnage data with postprocess_and_write_thread
+    // data structure used to exchange data with postprocess_and_write_thread
     ThreadsafeProducerConsumer<OverlapsAndCigars> overlaps_and_cigars_to_process;
 
     // There should be at least one postprocess_and_write_thread per worker_thread. If more threads are available one thread should be reserved for
@@ -462,6 +462,8 @@ int main(int argc, char* argv[])
 {
     logging::Init();
 
+
+    // TODO VI: this actually creates the fasta_parser implicitly
     const ApplicationParameters parameters(argc, argv);
 
     std::mutex output_mutex;
