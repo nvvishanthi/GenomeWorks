@@ -53,6 +53,7 @@ struct QueryReadID
     __device__ QueryReadID(){};
 };
 
+// takes the anchor and returns the query read id
 struct AnchorToQueryReadIDOp
 {
     __device__ __forceinline__ QueryReadID operator()(const Anchor& a) const

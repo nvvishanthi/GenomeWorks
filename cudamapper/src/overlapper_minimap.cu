@@ -261,7 +261,7 @@ __global__ void init_overlap_scores_to_value(double* scores, double val, const i
     const std::size_t d_tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (d_tid < n_overlaps)
     {
-        scores[d_tid] = 0;
+        scores[d_tid] = val;
     }
 }
 
@@ -276,8 +276,8 @@ __global__ void init_overlap_mask(bool* mask, const int32_t n_overlaps, const bo
 
 __global__ void init_predecessor_and_score_arrays(int32_t* predecessors,
                                                   double* scores,
-                                                  bool* mask,
-                                                  int32_t n_overlaps)
+                                                  bool* mask, // why is this here??
+                                                  size_t n_overlaps)
 {
     const std::size_t d_tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (d_tid < n_overlaps)
@@ -710,7 +710,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
     int32_t n_query_tiles;
     chainerutils::encode_anchor_query_locations(d_anchors.data(),
                                                 n_anchors,
-                                                TILE_SIZE,
+                                                TILE_SIZE,  // This is 1024
                                                 query_id_starts,
                                                 query_id_lengths,
                                                 query_id_ends,
@@ -720,7 +720,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
                                                 n_query_tiles,
                                                 _allocator,
                                                 _cuda_stream,
-                                                32);
+                                                32); // This is threads per block
 
     query_id_starts.clear_and_resize(0);
     query_id_lengths.clear_and_resize(0);
@@ -758,12 +758,13 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
     std::cout << "Num query tiles: " << n_query_tiles << std::endl;
     std::cout << "Num batches: " << num_batches << std::endl;
 
+    // fetch the computed data from the chaining algorithm
     std::vector<double> chain_scores;
     std::vector<int32_t> predecessors;
     chain_scores.resize(n_anchors);
     predecessors.resize(n_anchors);
     cudautils::device_copy_n(d_anchor_scores.data(), n_anchors, chain_scores.data(), _cuda_stream);
-    predecessors.resize(n_anchors);
+    //predecessors.resize(n_anchors);
     cudautils::device_copy_n(d_anchor_predecessors.data(), n_anchors, predecessors.data(), _cuda_stream);
     for (std::size_t i = 0; i < chain_scores.size(); ++i)
     {
@@ -771,6 +772,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
     }
 #endif
 
+    // TODO VI: find out what this does
     produce_anchor_chains<<<(n_anchors / block_size) + 1, block_size, 0, _cuda_stream>>>(d_anchors.data(),
                                                                                          d_overlaps_source.data(),
                                                                                          d_anchor_scores.data(),

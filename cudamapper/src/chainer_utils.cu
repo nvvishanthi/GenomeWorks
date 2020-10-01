@@ -104,10 +104,15 @@ void encode_anchor_query_locations(const Anchor* anchors,
                                    int32_t block_size)
 {
     AnchorToQueryReadIDOp anchor_to_read_op;
+    // This takes anchors and outputs and converts the anchors to QueryReadID types (references)
     cub::TransformInputIterator<QueryReadID, AnchorToQueryReadIDOp, const Anchor*> d_queries(anchors, anchor_to_read_op);
+    // create buffer of size number of anchors
     device_buffer<QueryReadID> d_query_read_ids(n_anchors, _allocator, _cuda_stream);
+    // vector of number of read ids...? I don't know what this is for
     device_buffer<int32_t> d_num_query_read_ids(1, _allocator, _cuda_stream);
 
+    // don't know what this is for yet
+    // this is for internal use for run length encoding
     device_buffer<char> d_temp_buf(_allocator, _cuda_stream);
     void* d_temp_storage           = nullptr;
     std::size_t temp_storage_bytes = 0;
@@ -157,9 +162,10 @@ void encode_anchor_query_locations(const Anchor* anchors,
                                                                                            query_ends.data(),
                                                                                            n_queries);
 
+    // what case is this? This always runs because TILE_SIZE is fixed at 1024
     if (tile_size > 0)
     {
-        calculate_tiles_per_read<<<(n_queries / block_size) + 1, 32, 0, _cuda_stream>>>(query_lengths.data(), n_queries, tile_size, tiles_per_query.data());
+        calculate_tiles_per_read<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_lengths.data(), n_queries, tile_size, tiles_per_query.data());
         device_buffer<int32_t> d_n_query_tiles(1, _allocator, _cuda_stream);
 
         d_temp_storage     = nullptr;
@@ -170,7 +176,7 @@ void encode_anchor_query_locations(const Anchor* anchors,
         cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, tiles_per_query.data(), d_n_query_tiles.data(), n_queries);
 
         n_query_tiles = cudautils::get_value_from_device(d_n_query_tiles.data(), _cuda_stream);
-        calculate_tile_starts<<<(n_queries / block_size) + 1, 32, 0, _cuda_stream>>>(query_starts.data(), tiles_per_query.data(), tile_starts.data(), tile_size, n_queries);
+        calculate_tile_starts<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_starts.data(), tiles_per_query.data(), tile_starts.data(), tile_size, n_queries);
     }
 }
 
