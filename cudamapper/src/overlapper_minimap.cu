@@ -480,9 +480,7 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
                     //current_score                               = current_score + marginal_score;
                     //current_pred                                = tile_start + counter - 1;
                     block_score_cache[thread_id_in_block]       = current_score + marginal_score;
-                    // Not sure if this is correct???
                     block_predecessor_cache[thread_id_in_block] = tile_start + counter;
-                    // GET CLARIFICATION ON THIS. WHY DO WE FILTER HERE?
                     if (current_score + marginal_score > word_size)
                     {
                         block_max_select_mask[thread_id_in_block]                = true;
@@ -571,7 +569,6 @@ __global__ void produce_anchor_chains(const Anchor* anchors,
                 int32_t pred = predecessors[index];
                 if (pred != -1)
                 {
-                    // we shouldn't have to do this twice
                     add_anchor_to_overlap(anchors[pred], final_overlap);
                     // printf("| %d %d %d %d | -> | %d %d %d %d |\n", anchors[index].query_read_id_, anchors[index].query_position_in_read_, anchors[index].target_read_id_, anchors[index].target_position_in_read_,
                     //        anchors[pred].query_read_id_, anchors[pred].query_position_in_read_, anchors[pred].target_read_id_, anchors[pred].target_position_in_read_);
