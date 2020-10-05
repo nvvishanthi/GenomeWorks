@@ -59,7 +59,10 @@ __global__ void convert_offsets_to_ends(std::int32_t* starts, std::int32_t* leng
     }
 }
 
-__global__ void calculate_tiles_per_read(std::int32_t* lengths,
+// we take each query that is encoded as length (ie there are 4 queries that have the same id)
+// so we take the (how many queries are in that section) and divide it by the size of the tile to get the
+// number of queries per tile
+__global__ void calculate_tiles_per_read(const std::int32_t* lengths,
                                          const int32_t num_reads,
                                          const int32_t tile_size,
                                          std::int32_t* tiles_per_read)
@@ -67,21 +70,27 @@ __global__ void calculate_tiles_per_read(std::int32_t* lengths,
     int32_t d_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
     if (d_thread_id < num_reads)
     {
+        // if the number of queries in that section are not evenly divisible, we need an extra block
+        // to accomadate for the leftovers
         int32_t n_integer_blocks    = lengths[d_thread_id] / tile_size;
         int32_t remainder           = lengths[d_thread_id] % tile_size;
         tiles_per_read[d_thread_id] = remainder == 0 ? n_integer_blocks : n_integer_blocks + 1;
     }
 }
 
-__global__ void calculate_tile_starts(std::int32_t* query_starts,
-                                      std::int32_t* tiles_per_query,
+// TODO VI: threads may be overwriting each other
+__global__ void calculate_tile_starts(const std::int32_t* query_starts,
+                                      const std::int32_t* tiles_per_query,
                                       std::int32_t* tile_starts,
                                       const int32_t tile_size,
-                                      int32_t num_queries)
+                                      const int32_t num_queries)
 {
     int32_t d_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
     if (d_thread_id < num_queries)
     {
+        // for each tile, we look up the query it corresponds to and offset it by the which tile in the query
+        // we're at multiplied by the total size of the tile
+        // TODO VI: this memory access pattern seems a little off? Thread i and thread i+1 would overwrite eachother, no?
         for (int i = 0; i < tiles_per_query[d_thread_id]; ++i)
         {
             tile_starts[d_thread_id + i] = query_starts[d_thread_id] + (i * tile_size);
@@ -109,6 +118,7 @@ void encode_anchor_query_locations(const Anchor* anchors,
     // create buffer of size number of anchors
     device_buffer<QueryReadID> d_query_read_ids(n_anchors, _allocator, _cuda_stream);
     // vector of number of read ids...? I don't know what this is for
+    // This is used to store the length of the encoded sequence
     device_buffer<int32_t> d_num_query_read_ids(1, _allocator, _cuda_stream);
 
     // don't know what this is for yet
@@ -132,45 +142,51 @@ void encode_anchor_query_locations(const Anchor* anchors,
                                        temp_storage_bytes,
                                        d_queries,
                                        d_query_read_ids.data(),
-                                       query_lengths.data(),
+                                       query_lengths.data(), // this is the vector of encoded lengths
                                        d_num_query_read_ids.data(),
                                        n_anchors);
-
+    // this is just the "length" of the encoded sequence
     n_queries          = cudautils::get_value_from_device(d_num_query_read_ids.data(), _cuda_stream);
     d_temp_storage     = nullptr;
     temp_storage_bytes = 0;
 
     cub::DeviceScan::ExclusiveSum(d_temp_storage,
                                   temp_storage_bytes,
-                                  query_lengths.data(),
-                                  query_starts.data(),
+                                  query_lengths.data(), // this is the vector of encoded lengths
+                                  query_starts.data(), // at this point, this vector is empty
                                   n_queries,
                                   _cuda_stream);
 
     d_temp_buf.clear_and_resize(temp_storage_bytes);
     d_temp_storage = d_temp_buf.data();
 
+    // this gives us the number of queries up to that point. eg How many query starts we have at each index
     cub::DeviceScan::ExclusiveSum(d_temp_storage,
                                   temp_storage_bytes,
-                                  query_lengths.data(),
-                                  query_starts.data(),
+                                  query_lengths.data(), // this is the vector of encoded lengths
+                                  query_starts.data(), 
                                   n_queries,
                                   _cuda_stream);
 
+    // paper uses the ends and finds the beginnings with x - w + 1, are we converting to that here?
+    // TODO VI: I'm not entirely sure what this is for? I think we want to change the read query
+    // (defined by [query_start, query_start + query_length] to [query_end - query_length + 1, query_end])
     convert_offsets_to_ends<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_starts.data(),
-                                                                                           query_lengths.data(),
+                                                                                           query_lengths.data(), // this is the vector of encoded lengths
                                                                                            query_ends.data(),
                                                                                            n_queries);
 
-    // what case is this? This always runs because TILE_SIZE is fixed at 1024
+    // what case is this? A: This always runs because TILE_SIZE is fixed at 1024
     if (tile_size > 0)
     {
         calculate_tiles_per_read<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_lengths.data(), n_queries, tile_size, tiles_per_query.data());
+        // This stores the total number of tiles that we need, calculated with the below Sum()
         device_buffer<int32_t> d_n_query_tiles(1, _allocator, _cuda_stream);
 
         d_temp_storage     = nullptr;
         temp_storage_bytes = 0;
         cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, tiles_per_query.data(), d_n_query_tiles.data(), n_queries);
+
         d_temp_buf.clear_and_resize(temp_storage_bytes);
         d_temp_storage = d_temp_buf.data();
         cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, tiles_per_query.data(), d_n_query_tiles.data(), n_queries);
@@ -217,10 +233,11 @@ void encode_anchor_query_target_pairs(const Anchor* anchors,
                                        temp_storage_bytes,
                                        d_query_target_pairs,
                                        d_qt_pairs.data(),
-                                       query_target_lengths.data(),
+                                       query_target_lengths.data(), // this is the vector of encoded lengths
                                        d_num_query_target_pairs.data(),
                                        n_anchors);
 
+    
     n_query_target_pairs = cudautils::get_value_from_device(d_num_query_target_pairs.data(), _cuda_stream);
 
     d_temp_storage     = nullptr;

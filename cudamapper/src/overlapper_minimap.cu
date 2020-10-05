@@ -161,16 +161,21 @@ __global__ void mask_overlaps(Overlap* overlaps, std::size_t n_overlaps, bool* s
         const bool mask_self_self     = false;
         auto query_bases_per_residue  = static_cast<double>(overlap_query_length) / static_cast<double>(overlaps[d_tid].num_residues_);
         auto target_bases_per_residue = static_cast<double>(overlap_target_length) / static_cast<double>(overlaps[d_tid].num_residues_);
-        select_mask[d_tid] &= overlap_query_length >= min_overlap_length & overlap_target_length >= min_overlap_length;
+        select_mask[d_tid] &= (overlap_query_length >= min_overlap_length) && (overlap_target_length >= min_overlap_length);
         select_mask[d_tid] &= overlaps[d_tid].num_residues_ >= min_residues;
         //mask[d_tid] &= !mask_self_self;
-        select_mask[d_tid] &= (query_bases_per_residue < max_bases_per_residue && target_bases_per_residue < max_bases_per_residue);
+        select_mask[d_tid] &= (query_bases_per_residue < max_bases_per_residue) && (target_bases_per_residue < max_bases_per_residue);
+        // Look at the overlaps and all the overlaps adjacent to me, up to some maximum. Between neighbor i and myself, if
+        // some criteria is met, defined by percent_reciprocal_overlap() and contained_overlap(), I get filtered
+        // TODO VI: since we do these pair-wise, I think there is some overlap in work that adjacent threads do
         for (int32_t i = d_tid + 1; i < d_tid + max_reciprocal_iterations; ++i)
         {
             if (i < n_overlaps)
             {
                 if (percent_reciprocal_overlap(overlaps[d_tid], overlaps[i]) > max_percent_reciprocal || contained_overlap(overlaps[d_tid], overlaps[i]))
+                {
                     select_mask[d_tid] = false;
+                }
             }
         }
     }
@@ -199,9 +204,9 @@ __device__ __forceinline__ void init_overlap(Overlap& overlap)
 {
     overlap.query_read_id_                 = 0;
     overlap.target_read_id_                = 0;
-    overlap.query_start_position_in_read_  = 4294967295;
+    overlap.query_start_position_in_read_  = UINT32_MAX;
     overlap.query_end_position_in_read_    = 0;
-    overlap.target_start_position_in_read_ = 4294967295;
+    overlap.target_start_position_in_read_ = UINT32_MAX;
     overlap.target_end_position_in_read_   = 0;
     overlap.relative_strand                = RelativeStrand::Forward;
     overlap.num_residues_                  = 0;
@@ -392,26 +397,34 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
     int32_t block_id           = blockIdx.x;  // Each block processes one read-tile of data.
     int32_t thread_id_in_block = threadIdx.x; // Equivalent to "j." Represents the end of a sliding window.
 
+    // figure out which block I am
     int32_t batch_block_id = batch_id * batch_size + block_id;
     if (batch_block_id < num_query_tiles)
     {
 
+        // All threads in the block will get the same tile_start number
         int32_t tile_start = tile_starts[batch_block_id];
 
+        // write is the leftmost index? global_read_index is offset by my thread_id
+        // revist this part
         int32_t global_write_index = tile_start;
         int32_t global_read_index  = tile_start + thread_id_in_block;
         // printf("%d %d %d %d\n", block_id, global_write_index, global_read_index, tile_start);
         if (global_write_index < num_anchors)
         {
             __shared__ Anchor block_anchor_cache[PREDECESSOR_SEARCH_ITERATIONS];
+            // I DON'T KNOW WHAT THIS IS FOR
             __shared__ bool block_max_select_mask[PREDECESSOR_SEARCH_ITERATIONS];
             __shared__ int32_t block_score_cache[PREDECESSOR_SEARCH_ITERATIONS];
             __shared__ int32_t block_predecessor_cache[PREDECESSOR_SEARCH_ITERATIONS];
 
             // Initialize the local caches
             block_anchor_cache[thread_id_in_block]      = anchors[global_read_index];
+            // I _believe_ some or most of these will be 0
             block_score_cache[thread_id_in_block]       = static_cast<int32_t>(scores[global_read_index]);
+            // I _believe some or most of these will be -1 at first
             block_predecessor_cache[thread_id_in_block] = predecessors[global_read_index];
+            // Still not sure what this is for
             block_max_select_mask[thread_id_in_block]   = false;
 
             for (int32_t i = PREDECESSOR_SEARCH_ITERATIONS, counter = 0; counter < batch_size; ++counter, ++i)
@@ -461,12 +474,15 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
                 //        possible_successor_anchor.target_position_in_read_);
                 __syncthreads();
 
+                // if 
                 if (current_score + marginal_score >= block_score_cache[thread_id_in_block] && (global_read_index + i) < num_anchors)
                 {
                     //current_score                               = current_score + marginal_score;
                     //current_pred                                = tile_start + counter - 1;
                     block_score_cache[thread_id_in_block]       = current_score + marginal_score;
+                    // Not sure if this is correct???
                     block_predecessor_cache[thread_id_in_block] = tile_start + counter;
+                    // GET CLARIFICATION ON THIS. WHY DO WE FILTER HERE?
                     if (current_score + marginal_score > word_size)
                     {
                         block_max_select_mask[thread_id_in_block]                = true;
@@ -483,10 +499,12 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
                     // It has therefore completed n = PREDECESSOR_SEARCH_ITERATIONS iterations.
                     // It's final score is known.
                     // Write its score and predecessor to the global_write_index + counter.
+                    // VI: Why do we offset by counter here? Is it the same as threadIdx.x % 64?
                     scores[global_write_index + counter]             = static_cast<double>(current_score);
                     predecessors[global_write_index + counter]       = current_pred;
                     anchor_select_mask[global_write_index + counter] = current_mask;
                 }
+                // I don't think we need to syncthreads here...? There shouldn't be anyone writing to the same place
                 __syncthreads();
             }
         }
@@ -553,6 +571,7 @@ __global__ void produce_anchor_chains(const Anchor* anchors,
                 int32_t pred = predecessors[index];
                 if (pred != -1)
                 {
+                    // we shouldn't have to do this twice
                     add_anchor_to_overlap(anchors[pred], final_overlap);
                     // printf("| %d %d %d %d | -> | %d %d %d %d |\n", anchors[index].query_read_id_, anchors[index].query_position_in_read_, anchors[index].target_read_id_, anchors[index].target_position_in_read_,
                     //        anchors[pred].query_read_id_, anchors[pred].query_position_in_read_, anchors[pred].target_read_id_, anchors[pred].target_position_in_read_);
@@ -708,6 +727,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
     device_buffer<int32_t> d_tile_starts(n_anchors, _allocator, _cuda_stream);
     int32_t n_queries;
     int32_t n_query_tiles;
+    // generates the scheduler blocks
     chainerutils::encode_anchor_query_locations(d_anchors.data(),
                                                 n_anchors,
                                                 TILE_SIZE,  // This is 1024
@@ -720,7 +740,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
                                                 n_query_tiles,
                                                 _allocator,
                                                 _cuda_stream,
-                                                32); // This is threads per block
+                                                block_size); // This is threads per block
 
     query_id_starts.clear_and_resize(0);
     query_id_lengths.clear_and_resize(0);
@@ -772,7 +792,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
     }
 #endif
 
-    // TODO VI: find out what this does
+    // the deschedule block. Get outputs from here
     produce_anchor_chains<<<(n_anchors / block_size) + 1, block_size, 0, _cuda_stream>>>(d_anchors.data(),
                                                                                          d_overlaps_source.data(),
                                                                                          d_anchor_scores.data(),
@@ -781,6 +801,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
                                                                                          n_anchors,
                                                                                          20);
 
+    // TODO VI: I think we can get better device occupancy here with some kernel refactoring
     mask_overlaps<<<(n_anchors / block_size) + 1, block_size, 0, _cuda_stream>>>(d_overlaps_source.data(),
                                                                                  n_anchors,
                                                                                  d_overlaps_select_mask.data(),
@@ -817,6 +838,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
     //     }
     // #endif
 
+    // why do we run this twice?
     d_overlaps_select_mask.clear_and_resize(n_filtered_overlaps);
     init_overlap_mask<<<(n_filtered_overlaps / block_size) + 1, block_size, 0, _cuda_stream>>>(d_overlaps_select_mask.data(), n_filtered_overlaps, true);
     mask_overlaps<<<(n_anchors / block_size) + 1, block_size, 0, _cuda_stream>>>(d_overlaps_dest.data(),

@@ -128,8 +128,8 @@ operator==(const QueryTargetPair& a, const QueryTargetPair& b);
 
 __global__ void convert_offsets_to_ends(std::int32_t* starts, std::int32_t* lengths, std::int32_t* ends, std::int32_t n_starts);
 
-__global__ void calculate_tile_starts(std::int32_t* query_starts,
-                                      std::int32_t* tiles_per_query,
+__global__ void calculate_tile_starts(const std::int32_t* query_starts,
+                                      const std::int32_t* tiles_per_query,
                                       std::int32_t* tile_starts,
                                       const int32_t tile_size,
                                       int32_t num_queries);
