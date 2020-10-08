@@ -83,19 +83,31 @@ __global__ void calculate_tile_starts(const std::int32_t* query_starts,
                                       const std::int32_t* tiles_per_query,
                                       std::int32_t* tile_starts,
                                       const int32_t tile_size,
-                                      const int32_t num_queries)
+                                      const int32_t num_queries,
+                                      const std::int32_t* tiles_per_query_up_to_point)
 {
     int32_t d_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+    int32_t stride = blockDim.x * gridDim.x;
     if (d_thread_id < num_queries)
     {
         // for each tile, we look up the query it corresponds to and offset it by the which tile in the query
         // we're at multiplied by the total size of the tile
         // TODO VI: this memory access pattern seems a little off? Thread i and thread i+1 would overwrite eachother, no?
-        for (int i = 0; i < tiles_per_query[d_thread_id]; ++i)
+        for (int i = 0; i < tiles_per_query[d_thread_id]; i++)
         {
-            tile_starts[d_thread_id + i] = query_starts[d_thread_id] + (i * tile_size);
+            //finds the offset in the ragged array and offsets to find start of "next" sub array
+            tile_starts[tiles_per_query_up_to_point[d_thread_id] + i] = query_starts[d_thread_id] + (i * tile_size);
         }
     }
+    //int counter = 0;
+    //for (int i =0; i < num_queries; i++)
+    //{
+    //    for (int j = 0; j < tiles_per_query[i]; j++)
+    //    {
+    //        tile_starts[counter] = query_starts[i] + (j * tile_size);
+    //        counter++;
+    //    }
+    //}
 }
 
 void encode_anchor_query_locations(const Anchor* anchors,
@@ -191,8 +203,32 @@ void encode_anchor_query_locations(const Anchor* anchors,
         d_temp_storage = d_temp_buf.data();
         cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, tiles_per_query.data(), d_n_query_tiles.data(), n_queries);
 
+        // this is the length of tile_starts
         n_query_tiles = cudautils::get_value_from_device(d_n_query_tiles.data(), _cuda_stream);
-        calculate_tile_starts<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_starts.data(), tiles_per_query.data(), tile_starts.data(), tile_size, n_queries);
+
+        // This is used to calculate the offsets for tile_starts
+        device_buffer<int32_t> d_tiles_per_query_up_to_point(n_queries, _allocator, _cuda_stream);
+
+        d_temp_storage     = nullptr;
+        temp_storage_bytes = 0;
+        cub::DeviceScan::ExclusiveSum(d_temp_storage,
+                                temp_storage_bytes,
+                                tiles_per_query.data(), // this is the vector of encoded lengths
+                                d_tiles_per_query_up_to_point.data(), 
+                                n_queries,
+                                _cuda_stream);
+
+        d_temp_buf.clear_and_resize(temp_storage_bytes);
+        d_temp_storage = d_temp_buf.data();
+        
+        cub::DeviceScan::ExclusiveSum(d_temp_storage,
+                                temp_storage_bytes,
+                                tiles_per_query.data(), // this is the vector of encoded lengths
+                                d_tiles_per_query_up_to_point.data(), 
+                                n_queries,
+                                _cuda_stream);        
+
+        calculate_tile_starts<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_starts.data(), tiles_per_query.data(), tile_starts.data(), tile_size, n_queries, d_tiles_per_query_up_to_point.data());
     }
 }
 

@@ -132,7 +132,8 @@ __global__ void calculate_tile_starts(const std::int32_t* query_starts,
                                       const std::int32_t* tiles_per_query,
                                       std::int32_t* tile_starts,
                                       const int32_t tile_size,
-                                      int32_t num_queries);
+                                      int32_t num_queries,
+                                      const std::int32_t* tiles_per_query_up_to_point);
 
 void encode_anchor_query_locations(const Anchor* anchors,
                                    int32_t n_anchors,
