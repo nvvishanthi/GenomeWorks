@@ -61,7 +61,7 @@ __global__ void convert_offsets_to_ends(std::int32_t* starts, std::int32_t* leng
 
 // we take each query that is encoded as length (ie there are 4 queries that have the same id)
 // so we take the (how many queries are in that section) and divide it by the size of the tile to get the
-// number of queries per tile
+// number of tiles for that query
 __global__ void calculate_tiles_per_read(const std::int32_t* lengths,
                                          const int32_t num_reads,
                                          const int32_t tile_size,
@@ -78,7 +78,9 @@ __global__ void calculate_tiles_per_read(const std::int32_t* lengths,
     }
 }
 
-// TODO VI: threads may be overwriting each other
+// TODO VI: threads may be overwriting each other.
+// because the number of queries is greater than number of tiles, each thread here has to write the query starts
+// for multiple tiles
 __global__ void calculate_tile_starts(const std::int32_t* query_starts,
                                       const std::int32_t* tiles_per_query,
                                       std::int32_t* tile_starts,
@@ -183,7 +185,8 @@ void encode_anchor_query_locations(const Anchor* anchors,
     // paper uses the ends and finds the beginnings with x - w + 1, are we converting to that here?
     // TODO VI: I'm not entirely sure what this is for? I think we want to change the read query
     // (defined by [query_start, query_start + query_length] to [query_end - query_length + 1, query_end])
-    convert_offsets_to_ends<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_starts.data(),
+    // The above () is NOT true
+    convert_offsets_to_ends<<<(n_queries / block_size) + 1, block_size, 0, _cuda_stream>>>(query_starts.data(), // this gives how many starts at each index
                                                                                            query_lengths.data(), // this is the vector of encoded lengths
                                                                                            query_ends.data(),
                                                                                            n_queries);

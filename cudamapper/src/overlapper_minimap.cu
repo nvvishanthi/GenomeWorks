@@ -314,6 +314,8 @@ __device__ __forceinline__ int32_t fast_approx_log2(const int32_t val)
         return 8;
 }
 
+
+// TODO VI: This may need to be fixed at some point. Likely the last line
 __device__ __forceinline__ int32_t log_linear_anchor_weight(const Anchor& a,
                                                             const Anchor& b,
                                                             const int32_t word_size,
@@ -328,9 +330,13 @@ __device__ __forceinline__ int32_t log_linear_anchor_weight(const Anchor& a,
     int32_t b_query_pos  = b.query_position_in_read_ + word_size;
     int32_t b_target_pos = b.target_position_in_read_;
     if (b_target_pos < a.target_position_in_read_)
+    {
         b_target_pos -= word_size;
+    }
     else
+    {
         b_target_pos += word_size;
+    }
 
     int32_t x_dist = abs(int(b_target_pos) - int(a.target_position_in_read_));
 
@@ -352,14 +358,16 @@ __device__ __forceinline__ int32_t log_linear_anchor_weight(const Anchor& a,
     int32_t min_size = word_size;
     int32_t score    = min_dist > min_size ? min_size : min_dist;
     //int32_t score = min_dist;
+    // This is sensitive to typecasts...
     if (dist_diff > 0)
-        score -= (double(score) * (0.01 * word_size) + double(log_dist_diff) * 0.5);
+        score -= (dist_diff * (0.01 * word_size)) + (log_dist_diff >> 1);
     //printf("%d %d %d %d | %d \n", x_dist, y_dist, min_dist, min_size, score);
     return score;
 }
 
 ///
 /// \brief Chains one tile of anchors within a read-tile
+/// TODO VI: I don't know if this is true
 /// This tile may contain anchors from a single read or multiple
 /// reads.
 /// Each block starts within one reads and proceeds tile_size iterations
@@ -381,6 +389,8 @@ __device__ __forceinline__ int32_t log_linear_anchor_weight(const Anchor& a,
 /// \param max_distance
 /// \param max_bandwidth
 /// \return __global__
+
+// TODO VI: each block operates on a single tile
 __global__ void chain_anchors_in_block(const Anchor* anchors,
                                        double* scores,
                                        int32_t* predecessors,
@@ -388,8 +398,8 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
                                        const int32_t* tile_starts,
                                        const int32_t num_anchors,
                                        const int32_t num_query_tiles,
-                                       const int32_t batch_id,
-                                       const int32_t batch_size,
+                                       const int32_t batch_id,  // which batch number we are on
+                                       const int32_t batch_size, // fixed to TILE_SIZE...?
                                        const int32_t word_size,
                                        const int32_t max_distance,
                                        const int32_t max_bandwidth)
@@ -397,8 +407,8 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
     int32_t block_id           = blockIdx.x;  // Each block processes one read-tile of data.
     int32_t thread_id_in_block = threadIdx.x; // Equivalent to "j." Represents the end of a sliding window.
 
-    // figure out which block I am
-    int32_t batch_block_id = batch_id * batch_size + block_id;
+    // figure out which tile I am currently working on
+    int32_t batch_block_id = batch_id * BLOCK_COUNT + block_id; // TODO VI: not sure if this is correct...? I think we want this instead of tile size
     if (batch_block_id < num_query_tiles)
     {
 
@@ -408,7 +418,7 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
         // write is the leftmost index? global_read_index is offset by my thread_id
         // revist this part
         int32_t global_write_index = tile_start;
-        int32_t global_read_index  = tile_start + thread_id_in_block;
+        int32_t global_read_index  = tile_start + thread_id_in_block; // this is the right-most index of sliding window
         // printf("%d %d %d %d\n", block_id, global_write_index, global_read_index, tile_start);
         if (global_write_index < num_anchors)
         {
@@ -421,12 +431,14 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
             // Initialize the local caches
             block_anchor_cache[thread_id_in_block]      = anchors[global_read_index];
             // I _believe_ some or most of these will be 0
+            // not sure why we downcast to integer here
             block_score_cache[thread_id_in_block]       = static_cast<int32_t>(scores[global_read_index]);
             // I _believe some or most of these will be -1 at first
             block_predecessor_cache[thread_id_in_block] = predecessors[global_read_index];
             // Still not sure what this is for
             block_max_select_mask[thread_id_in_block]   = false;
 
+            // iterate through the tile
             for (int32_t i = PREDECESSOR_SEARCH_ITERATIONS, counter = 0; counter < batch_size; ++counter, ++i)
             {
                 __syncthreads();
@@ -734,7 +746,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
                                                 d_tiles_per_query_id,
                                                 d_tile_starts,
                                                 n_queries,
-                                                n_query_tiles,
+                                                n_query_tiles, // total number of tiles
                                                 _allocator,
                                                 _cuda_stream,
                                                 block_size); // This is threads per block
@@ -743,18 +755,15 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
     query_id_lengths.clear_and_resize(0);
     query_id_ends.clear_and_resize(0);
 
-    int32_t num_batches = (n_query_tiles / BLOCK_COUNT);
+    int32_t num_batches = (n_query_tiles / BLOCK_COUNT) + 1;
 
-    // We use batches to ensure that for each anchor, the
-    // scores and predecessors up to that anchor have been generated
-    // in a previous batch or are in the current tile.
-    if (num_batches < 1)
-        num_batches = 1;
+    fprintf(stderr, "THE NUMBER OF BATCHES IS: %d\n", num_batches);
     for (std::size_t batch = 0; batch < static_cast<size_t>(num_batches); ++batch)
     {
 
         //std::cerr << "Running batch " << batch << ". Num anchors: " << n_anchors << std::endl;
-        // Launch one block per read-tile and process the anchors within that tile (one anchor per thread)
+        // Launch one 1792 blocks (from paper), with 64 threads
+        // each batch is of size BLOCK_COUNT
         chain_anchors_in_block<<<BLOCK_COUNT, PREDECESSOR_SEARCH_ITERATIONS, 0, _cuda_stream>>>(d_anchors.data(),
                                                                                                 d_anchor_scores.data(),
                                                                                                 d_anchor_predecessors.data(),
