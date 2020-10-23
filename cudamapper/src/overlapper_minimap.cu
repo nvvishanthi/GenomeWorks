@@ -447,6 +447,7 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
             {
                 __syncthreads();
                 // on the first iteration, every thread looks at the 0th anchor
+                // I think this needs to be renamed to possible_predecessor_anchor
                 const Anchor possible_successor_anchor = block_anchor_cache[i % PREDECESSOR_SEARCH_ITERATIONS];
                 current_score            = block_score_cache[i % PREDECESSOR_SEARCH_ITERATIONS];
                 current_pred             = block_predecessor_cache[i % PREDECESSOR_SEARCH_ITERATIONS];
@@ -489,7 +490,7 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
                     //current_score                               = current_score + marginal_score;
                     //current_pred                                = tile_start + counter - 1;
                     block_score_cache[thread_id_in_block]       = current_score + marginal_score;
-                    // TODO VI: I'm not entirely sure about this part
+                    // TODO VI: I'm not entirely sure about this part. I think this needs to be refactored to 
                     block_predecessor_cache[thread_id_in_block] = tile_start + counter; // this expands to tile_starts[batch_block_id] + counter, where counter is 0 -> 1024
                     if (current_score + marginal_score > word_size)
                     {
@@ -526,7 +527,8 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
             //    scores[global_write_index + counter + thread_id_in_block]             = current_score;
             //    predecessors[global_write_index + counter + thread_id_in_block]       = current_pred;
             //    anchor_select_mask[global_write_index + counter + thread_id_in_block] = current_mask;
-                  // These are maybe correct
+                  // These are maybe correct. Potentially have an issue where the 0th thread contains the value to the rightmost/65th value in the sliding window
+                  // counter here is fixed at 1024
                   //scores[global_write_index + counter + thread_id_in_block] =  block_score_cache[thread_id_in_block];
                   //predecessors[global_write_index + counter + thread_id_in_block] = block_predecessor_cache[thread_id_in_block];
                   //anchor_select_mask[global_write_index + counter + thread_id_in_block] = block_max_select_mask[thread_id_in_block];
