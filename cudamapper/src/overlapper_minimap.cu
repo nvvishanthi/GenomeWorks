@@ -490,7 +490,7 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
                     //current_score                               = current_score + marginal_score;
                     //current_pred                                = tile_start + counter - 1;
                     block_score_cache[thread_id_in_block]       = current_score + marginal_score;
-                    // TODO VI: I'm not entirely sure about this part. I think this needs to be refactored to 
+                    // TODO VI: I'm not entirely sure about this part. I think this needs to be refactored to current_pred?
                     block_predecessor_cache[thread_id_in_block] = tile_start + counter; // this expands to tile_starts[batch_block_id] + counter, where counter is 0 -> 1024
                     if (current_score + marginal_score > word_size)
                     {
