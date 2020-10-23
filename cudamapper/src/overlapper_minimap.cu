@@ -517,12 +517,19 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
 
             }
             __syncthreads();
-            // TODO not sure if this is correct
+            // whatever is left in our cache is the values from the first 64 anchors in the subsequent block
             //if (global_write_index + counter + thread_id_in_block < num_anchors)
             //{
+                // These are wrong because they will all be the same score/pred for _every_ anchor
+                // we have to look into our cache for the values to write back
+                // will remove these later
             //    scores[global_write_index + counter + thread_id_in_block]             = current_score;
             //    predecessors[global_write_index + counter + thread_id_in_block]       = current_pred;
             //    anchor_select_mask[global_write_index + counter + thread_id_in_block] = current_mask;
+                  // These are maybe correct
+                  //scores[global_write_index + counter + thread_id_in_block] =  block_score_cache[thread_id_in_block];
+                  //predecessors[global_write_index + counter + thread_id_in_block] = block_predecessor_cache[thread_id_in_block];
+                  //anchor_select_mask[global_write_index + counter + thread_id_in_block] = block_max_select_mask[thread_id_in_block];
             //}
         }
     }
