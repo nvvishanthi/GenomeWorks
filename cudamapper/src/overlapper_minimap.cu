@@ -527,11 +527,12 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
             //    scores[global_write_index + counter + thread_id_in_block]             = current_score;
             //    predecessors[global_write_index + counter + thread_id_in_block]       = current_pred;
             //    anchor_select_mask[global_write_index + counter + thread_id_in_block] = current_mask;
-                  // These are maybe correct. Potentially have an issue where the 0th thread contains the value to the rightmost/65th value in the sliding window
-                  // counter here is fixed at 1024
-                  //scores[global_write_index + counter + thread_id_in_block] =  block_score_cache[thread_id_in_block];
-                  //predecessors[global_write_index + counter + thread_id_in_block] = block_predecessor_cache[thread_id_in_block];
-                  //anchor_select_mask[global_write_index + counter + thread_id_in_block] = block_max_select_mask[thread_id_in_block];
+                  // These are maybe correct. The 0th index should have the values corresponding to the rightmost anchor
+                  // so circularly shift those before we write back data. We can do cool bit tricks here in case the compiler doesn't
+                  // optimize this
+                  //scores[global_write_index + counter + thread_id_in_block] =  block_score_cache[(thread_id_in_block + 63) % 64];
+                  //predecessors[global_write_index + counter + thread_id_in_block] = block_predecessor_cache[(thread_id_in_block + 63) % 64];
+                  //anchor_select_mask[global_write_index + counter + thread_id_in_block] = block_max_select_mask[(thread_id_in_block + 63) % 64];
             //}
         }
     }
