@@ -508,7 +508,6 @@ void chain_anchors_in_block_cpu(std::vector<Anchor>& anchors,
     {
         const Anchor current_anchor = anchors[i];
 
-        // not sure we actually need the caches...
         int32_t current_score = score_cache[i % 65];
         int32_t current_pred  = predecessor_cache[i % 65];
 
@@ -526,13 +525,12 @@ void chain_anchors_in_block_cpu(std::vector<Anchor>& anchors,
         {
             Anchor successor = anchors[j];
 
-            // maybe the scoring is causing problems?
             int32_t marginal_score = log_linear_anchor_weight(current_anchor, successor, word_size, max_distance, max_bandwidth);
 
             if (current_score + marginal_score >= score_cache[j % 65])
             {
                 score_cache[j % 65] = current_score + marginal_score;
-                predecessor_cache[j % 65] = i;  // anchor at index i is maybe my predecessor
+                predecessor_cache[j % 65] = i;
             }
         }
 
@@ -697,9 +695,7 @@ __global__ void chain_anchors_in_block(const Anchor* anchors,
             // whatever is left in our cache is the values from the first 64 anchors in the subsequent block
             if (global_write_index + counter + thread_id_in_block < num_anchors)
             {
-                  // These are maybe correct. The 0th index should have the values corresponding to the rightmost anchor
-                  // so circularly shift those before we write back data. We can do cool bit tricks here in case the compiler doesn't
-                  // optimize this
+                  // These are maybe correct. The 0th index _might_ have the values corresponding to the rightmost anchor
                   scores[global_write_index + counter + thread_id_in_block] =  block_score_cache[thread_id_in_block];
                   predecessors[global_write_index + counter + thread_id_in_block] = block_predecessor_cache[thread_id_in_block];
                   anchor_select_mask[global_write_index + counter + thread_id_in_block] = block_max_select_mask[thread_id_in_block];
@@ -859,7 +855,7 @@ void drop_scores_by_mask(device_buffer<double>& d_scores,
 }
 
 void drop_overlaps_by_mask(device_buffer<Overlap>& d_overlaps,
-                           device_buffer<int32_t>& d_mask,
+                           device_buffer<bool>& d_mask,
                            const std::int32_t n_overlaps,
                            device_buffer<Overlap>& d_dest,
                            device_buffer<int32_t>& d_filtered_count,
@@ -966,7 +962,6 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
                                 n_anchors);
 
     chainerutils::backtrace_anchors_to_overlaps_cpu(anchors,
-                                 //fused_overlaps,
                                        overlaps_source,
                                        scores,
                                        select_mask,
