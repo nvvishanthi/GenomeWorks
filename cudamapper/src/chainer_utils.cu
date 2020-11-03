@@ -50,34 +50,7 @@ __device__ bool operator==(const QueryReadID& a, const QueryReadID& b)
     return a.query_read_id_ == b.query_read_id_;
 }
 
-__device__ Overlap create_simple_overlap(const Anchor& start, const Anchor& end, const int32_t num_anchors)
-{
-    Overlap overlap;
-    overlap.num_residues_ = num_anchors;
-
-    overlap.query_read_id_  = start.query_read_id_;
-    overlap.target_read_id_ = start.target_read_id_;
-    assert(start.query_read_id_ == end.query_read_id_ && start.target_read_id_ == end.target_read_id_);
-
-    overlap.query_start_position_in_read_ = min(start.query_position_in_read_, end.query_position_in_read_);
-    overlap.query_end_position_in_read_   = max(start.query_position_in_read_, end.query_position_in_read_);
-    bool is_negative_strand               = end.target_position_in_read_ < start.target_position_in_read_;
-    if (is_negative_strand)
-    {
-        overlap.relative_strand                = RelativeStrand::Reverse;
-        overlap.target_start_position_in_read_ = end.target_position_in_read_;
-        overlap.target_end_position_in_read_   = start.target_position_in_read_;
-    }
-    else
-    {
-        overlap.relative_strand                = RelativeStrand::Forward;
-        overlap.target_start_position_in_read_ = start.target_position_in_read_;
-        overlap.target_end_position_in_read_   = end.target_position_in_read_;
-    }
-    return overlap;
-}
-
-Overlap create_simple_overlap_cpu(const Anchor& start, const Anchor& end, const int32_t num_anchors)
+__host__ __device__ Overlap create_simple_overlap(const Anchor& start, const Anchor& end, const int32_t num_anchors)
 {
     Overlap overlap;
     overlap.num_residues_ = num_anchors;
@@ -194,40 +167,45 @@ __global__ void backtrace_anchors_to_overlaps_debug(const Anchor* anchors,
         }
     }
 }
-void backtrace_anchors_to_overlaps_cpu(const Anchor* anchors,
-                                       Overlap* overlaps,
-                                       double* scores,
-                                       bool* max_select_mask,
-                                       int32_t* predecessors,
+
+void backtrace_anchors_to_overlaps_cpu(std::vector<Anchor>& anchors,
+                                       std::vector<Overlap>& overlaps,
+                                       std::vector<double>& scores,
+                                       std::vector<bool>&  max_select_mask,
+                                       std::vector<int32_t>& predecessors,
                                        const int32_t n_anchors,
                                        const int32_t min_score)
 {
-    int32_t end = n_anchors - 1;
-    for (int32_t i = end; i >= 0; i--)
+    for (int32_t i = overlaps.size() - 1; i >= 0; i--)
     {
+        // we have a type mismatch comparison here
+        //if (max_select_mask[i] == false)
+        //    continue;
         if (scores[i] >= min_score)
         {
             int32_t index                = i;
             int32_t first_index          = index;
-            int32_t num_anchors_in_chain = 0;
+            int32_t num_anchors_in_chain = 1;
             Anchor final_anchor          = anchors[i];
 
             while (index != -1)
             {
                 first_index  = index;
-                int32_t pred = predecessors[index];
+                const int32_t pred = predecessors[index];
+                // I have a predecessor, so mark the overlap that ends at pred for filter
                 if (pred != -1)
                 {
                     max_select_mask[pred] = false;
+                    num_anchors_in_chain++;
                 }
-                num_anchors_in_chain++;
                 index = predecessors[index];
             }
             Anchor first_anchor            = anchors[first_index];
-            overlaps[i] = create_simple_overlap_cpu(first_anchor, final_anchor, num_anchors_in_chain);
+            overlaps[i] = create_simple_overlap(first_anchor, final_anchor, num_anchors_in_chain);
         }
         else
         {
+            // we fail to meet min score, so mark for filter
             max_select_mask[i] = false;
         }
     }
