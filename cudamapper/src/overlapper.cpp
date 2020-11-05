@@ -136,11 +136,11 @@ void Overlapper::post_process_overlaps(std::vector<Overlap>& overlaps, const boo
 {
     const auto num_overlaps = get_size(overlaps);
     bool in_fuse            = false;
-    int fused_target_start;
-    int fused_query_start;
-    int fused_target_end;
-    int fused_query_end;
-    int num_residues = 0;
+    int fused_target_start  = 0;
+    int fused_query_start   = 0;
+    int fused_target_end    = 0;
+    int fused_query_end     = 0;
+    int num_residues        = 0;
     Overlap prev_overlap;
     std::vector<bool> drop_overlap_mask;
     if (drop_fused_overlaps)
@@ -306,7 +306,8 @@ void Overlapper::rescue_overlap_ends(std::vector<Overlap>& overlaps,
                                      const std::int32_t extension,
                                      const float required_similarity)
 {
-
+    (void)extension;
+    (void)required_similarity;
     auto reverse_overlap = [](cudamapper::Overlap& overlap, std::uint32_t target_sequence_length) {
         overlap.relative_strand      = overlap.relative_strand == RelativeStrand::Forward ? RelativeStrand::Reverse : RelativeStrand::Forward;
         position_in_read_t start_tmp = overlap.target_start_position_in_read_;
