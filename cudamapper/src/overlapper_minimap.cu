@@ -535,7 +535,7 @@ void chain_anchors_in_block_cpu(std::vector<Anchor>& anchors,
         }
 
         score_cache[i % window_size] = 0;
-        predecessor_cache[i % window_size] = -1;
+        predecessor_cache[i % window_size] = 0;
     }
     return;    
 }
@@ -974,7 +974,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
 {
 #ifdef RUN_CPU
     const size_t n_anchors = d_anchors.size();
-    std::vector<int32_t> predecessors(n_anchors, -1);
+    std::vector<int32_t> predecessors(n_anchors, 0);
     std::vector<double> scores(n_anchors, 0);
     std::vector<Anchor> anchors(n_anchors);
     std::vector<bool> select_mask(n_anchors, true);
@@ -993,7 +993,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
                                        select_mask,
                                        predecessors,
                                        n_anchors,
-                                       10); // min_score
+                                       30); // min_score
 
     mask_overlaps_cpu(overlaps_source,
                         n_anchors,
@@ -1003,7 +1003,7 @@ void OverlapperMinimap::get_overlaps(std::vector<Overlap>& fused_overlaps,
                         min_bases_per_residue,
                         all_to_all,
                         false,
-                        0.7,
+                        0.9,
                         2048,
                         query_parser,
                         target_parser);

@@ -172,11 +172,15 @@ void backtrace_anchors_to_overlaps_cpu(std::vector<Anchor>& anchors,
                                        const int32_t n_anchors,
                                        const int32_t min_score)
 {
+    std::vector<bool> visited(overlaps.size(), false);
     for (int32_t i = overlaps.size() - 1; i >= 0; i--)
     {
-        // we have a type mismatch comparison here
-        //if (max_select_mask[i] == false)
-        //    continue;
+        // current anchor is already part of a chain, so don't do a backtrace
+        if (visited[i])
+        {
+            max_select_mask[i] = false;
+            continue;
+        }
         if (scores[i] >= min_score)
         {
             int32_t index                = i;
@@ -188,11 +192,18 @@ void backtrace_anchors_to_overlaps_cpu(std::vector<Anchor>& anchors,
             {
                 first_index  = index;
                 const int32_t pred = predecessors[index];
+                
                 // I have a predecessor, so mark the overlap that ends at pred for filter
                 if (pred != -1)
                 {
-                    max_select_mask[pred] = false;
-                    num_anchors_in_chain++;
+                    if (visited[pred])
+                        break;
+                    else
+                    {
+                        visited[pred] = true;
+                        max_select_mask[pred] = false;
+                        num_anchors_in_chain++;
+                    }
                 }
                 index = predecessors[index];
             }
@@ -206,6 +217,7 @@ void backtrace_anchors_to_overlaps_cpu(std::vector<Anchor>& anchors,
         }
     }
 }
+
 __global__ void convert_offsets_to_ends(std::int32_t* starts, std::int32_t* lengths, std::int32_t* ends, std::int32_t n_starts)
 {
     std::int32_t d_tid = blockIdx.x * blockDim.x + threadIdx.x;
