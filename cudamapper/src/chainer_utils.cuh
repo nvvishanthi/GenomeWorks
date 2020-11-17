@@ -30,6 +30,38 @@ namespace cudamapper
 namespace chainerutils
 {
 
+///
+/// \brief Stores a chain reported by minimap2's --print-seeds debug mode.
+///
+struct seed_debug_chain
+{
+    int32_t chain_id;
+    std::string query_id;
+    std::string target_id;
+    std::vector<Anchor> anchors;
+    std::vector<bool> anchor_strands;
+};
+
+///
+/// \brief Stores the seeds and chains reported by minimap2's --print-seeds debug mode.
+///
+struct seed_debug_entry
+{
+    std::string query_id;
+    int32_t query_int_id;
+    std::unordered_map<std::string, int32_t> target_id_to_int_id;
+    std::vector<Anchor> seeds;
+    std::vector<int32_t> seed_lengths;
+    std::vector<seed_debug_chain> chains;
+
+    void add_seed(const std::vector<std::string>& tokens)
+    {
+    }
+    void add_chain_entry(const std::vector<std::string>& tokens)
+    {
+    }
+};
+
 /// \brief Create an overlap from the first and last anchor in the chain and
 /// the total number of anchors in the chain.
 ///
@@ -122,6 +154,8 @@ __global__ void output_overlap_chains_by_RLE(const Overlap* const overlaps,
                                              int32_t* const anchor_chains,
                                              int32_t* const anchor_chain_starts,
                                              const uint32_t num_overlaps);
+
+std::vector<seed_debug_entry> read_minimap2_seed_chains(char* seed_file_name);
 
 } // namespace chainerutils
 } // namespace cudamapper

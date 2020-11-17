@@ -16,6 +16,11 @@
 
 #include "chainer_utils.cuh"
 
+#include <vector>
+#include <unordered_map>
+#include <fstream>
+#include <sstream>
+
 #include <thrust/execution_policy.h>
 #include <thrust/transform_scan.h>
 #include <thrust/reduce.h>
@@ -202,6 +207,74 @@ __global__ void output_overlap_chains_by_RLE(const Overlap* const overlaps,
             anchor_chains[index] = index;
         }
     }
+}
+
+std::vector<std::string> tokenize_line(std::string line, const char delim = '\t')
+{
+    std::vector<std::string> tokens;
+    std::stringstream st(line);
+    std::string tmp;
+    while (std::getline(st, tmp, delim))
+    {
+        tokens.push_back(tmp);
+    }
+    return tokens;
+}
+
+std::vector<seed_debug_entry> read_minimap2_seed_chains(char* seed_file_name)
+{
+
+    std::vector<seed_debug_entry> seeds;
+    int32_t q_id = 0;
+
+    std::ifstream seed_file_stream;
+    seed_file_stream.open(seed_file_name, std::ios::in);
+    std::string line;
+    if (seed_file_stream.is_open() && seed_file_stream.good())
+    {
+        std::vector<std::string> current_chain;
+        while (std::getline(seed_file_stream, line))
+        {
+            if (line[0] == '[')
+            {
+                continue;
+            }
+            std::vector<std::string> tokens = tokenize_line(line, '\t');
+            if (tokens[0] == "QR")
+            {
+                // Create a new seed_debug_entry
+                seed_debug_entry current;
+                current.query_id     = tokens[1];
+                current.query_int_id = q_id++;
+                // Skip the next RS line, as we can't do anything with it yet.
+                std::getline(seed_file_stream, line);
+                // Retrieve the first seed line
+                std::getline(seed_file_stream, line);
+                tokens = tokenize_line(line, '\t');
+                // Parse all the seeds
+                while (tokens[0] == "SD")
+                {
+                    // process seed line to generate and store a corresponding Anchor
+                    seeds.add_seed(tokens);
+                    std::getline(seed_file_stream, line);
+                    tokens = tokenize_line(line, '\t');
+                }
+                while (tokens[0] == "CN")
+                {
+                    // process the chain line and store it
+                    seeds.add_chain_entry(tokens);
+                    std::getline(seed_file_stream, line);
+                    tokens = tokenize_line(line, '\t');
+                }
+            }
+            getline(seed_file_stream, line);
+        }
+
+        // Clear the current chain
+    }
+
+    seed_file_stream.close();
+    return seeds;
 }
 
 } // namespace chainerutils
