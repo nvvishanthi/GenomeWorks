@@ -232,7 +232,7 @@ std::vector<seed_debug_entry> read_minimap2_seed_chains(char* seed_file_name)
     std::string line;
     if (seed_file_stream.is_open() && seed_file_stream.good())
     {
-        std::vector<std::string> current_chain;
+
         while (std::getline(seed_file_stream, line))
         {
             if (line[0] == '[')
@@ -255,17 +255,18 @@ std::vector<seed_debug_entry> read_minimap2_seed_chains(char* seed_file_name)
                 while (tokens[0] == "SD")
                 {
                     // process seed line to generate and store a corresponding Anchor
-                    seeds.add_seed(tokens);
+                    current.add_seed(tokens);
                     std::getline(seed_file_stream, line);
                     tokens = tokenize_line(line, '\t');
                 }
                 while (tokens[0] == "CN")
                 {
                     // process the chain line and store it
-                    seeds.add_chain_entry(tokens);
+                    current.add_chain_entry(tokens);
                     std::getline(seed_file_stream, line);
                     tokens = tokenize_line(line, '\t');
                 }
+                seeds.push_back(current);
             }
             getline(seed_file_stream, line);
         }

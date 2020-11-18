@@ -16,6 +16,10 @@
 
 #pragma once
 
+#include <vector>
+#include <unordered_map>
+#include <string>
+
 #include <claraparabricks/genomeworks/cudamapper/types.hpp>
 #include <claraparabricks/genomeworks/utils/device_buffer.hpp>
 
@@ -50,12 +54,24 @@ struct seed_debug_entry
     std::string query_id;
     int32_t query_int_id;
     std::unordered_map<std::string, int32_t> target_id_to_int_id;
+    int32_t target_id_idx = 0;
     std::vector<Anchor> seeds;
     std::vector<int32_t> seed_lengths;
-    std::vector<seed_debug_chain> chains;
+    std::unordered_map<int32_t, seed_debug_chain> chains;
 
     void add_seed(const std::vector<std::string>& tokens)
     {
+        if (target_id_to_int_id.find(tokens[1]) == target_id_to_int_id.end())
+        {
+            target_id_to_int_id[tokens[1]] = target_id_idx++;
+        }
+        Anchor a;
+        a.query_read_id_           = query_int_id;
+        a.target_read_id_          = target_id_to_int_id[tokens[1]];
+        a.query_position_in_read_  = std::stoull(tokens[4]); // TODO: verify that the indices are correct here
+        a.target_position_in_read_ = std::stoull(tokens[2]);
+        seeds.push_back(a);
+        seed_lengths.push_back(std::stoull(tokens[5]));
     }
     void add_chain_entry(const std::vector<std::string>& tokens)
     {
