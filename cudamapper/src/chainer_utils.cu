@@ -263,7 +263,7 @@ std::vector<seed_debug_entry> read_minimap2_seed_chains(const char* const seed_f
                 {
                     // process the chain line and store it
                     tokens = tokenize_line(line, '\t');
-                    //current.add_chain_entry(tokens);
+                    current.add_chain_entry(tokens);
                     std::getline(seed_file_stream, line);
                 }
                 seeds.push_back(current);

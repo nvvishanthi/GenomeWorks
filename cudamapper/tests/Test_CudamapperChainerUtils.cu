@@ -290,6 +290,7 @@ TEST(TestChainerUtils, Test_Seed_Debug_Input)
     ASSERT_EQ(entries[0].seeds[0].query_position_in_read_, 43);
     ASSERT_EQ(entries[0].seeds.size(), 338);
     ASSERT_EQ(entries[0].seeds[4].target_position_in_read_, 122);
+    ASSERT_EQ(entries[0].chains.size(), 1);
 }
 
 TEST(TestChainerUtils, Test_Output_Overlap_Chains_By_Backtrace)

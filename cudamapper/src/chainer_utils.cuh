@@ -37,11 +37,10 @@ namespace chainerutils
 ///
 /// \brief Stores a chain reported by minimap2's --print-seeds debug mode.
 ///
-struct seed_debug_chain
+struct seed_debug_chain_link
 {
     int32_t chain_id;
-    std::string query_id;
-    std::string target_id;
+    int32_t target_id;
     std::vector<Anchor> anchors;
     std::vector<bool> anchor_strands;
 };
@@ -57,7 +56,7 @@ struct seed_debug_entry
     int32_t target_id_idx = 0;
     std::vector<Anchor> seeds;
     std::vector<int32_t> seed_lengths;
-    std::unordered_map<int32_t, seed_debug_chain> chains;
+    std::unordered_map<int32_t, seed_debug_chain_link> chains;
 
     void add_seed(const std::vector<std::string>& tokens)
     {
@@ -75,6 +74,23 @@ struct seed_debug_entry
     }
     void add_chain_entry(const std::vector<std::string>& tokens)
     {
+        int32_t chain_id = stoll(tokens[1]);
+        seed_debug_chain_link link;
+        if (chains.find(chain_id) == end(chains))
+        {
+            chains[chain_id] = link;
+        }
+        link = chains[chain_id];
+
+        link.chain_id  = chain_id;
+        link.target_id = target_id_to_int_id[tokens[2]];
+        Anchor a;
+        a.query_read_id_           = query_int_id;
+        a.target_read_id_          = link.target_id;
+        a.query_position_in_read_  = std::stoull(tokens[5]);
+        a.target_position_in_read_ = std::stoull(tokens[3]);
+        link.anchors.push_back(a);
+        link.anchor_strands.push_back(tokens[4] == "+");
     }
 };
 
