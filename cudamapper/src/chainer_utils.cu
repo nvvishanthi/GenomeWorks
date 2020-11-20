@@ -250,21 +250,21 @@ std::vector<seed_debug_entry> read_minimap2_seed_chains(const char* const seed_f
                 std::getline(seed_file_stream, line);
                 // Retrieve the first seed line
                 std::getline(seed_file_stream, line);
-                tokens = tokenize_line(line, '\t');
                 // Parse all the seeds
-                while (tokens[0] == "SD")
+                while (line.substr(0, 2) == "SD")
                 {
                     // process seed line to generate and store a corresponding Anchor
-                    current.add_seed(tokens);
-                    std::getline(seed_file_stream, line);
                     tokens = tokenize_line(line, '\t');
+                    current.add_seed(tokens);
+
+                    std::getline(seed_file_stream, line);
                 }
-                while (tokens[0] == "CN")
+                while (line.substr(0, 2) == "CN")
                 {
                     // process the chain line and store it
-                    current.add_chain_entry(tokens);
-                    std::getline(seed_file_stream, line);
                     tokens = tokenize_line(line, '\t');
+                    //current.add_chain_entry(tokens);
+                    std::getline(seed_file_stream, line);
                 }
                 seeds.push_back(current);
             }
