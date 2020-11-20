@@ -171,7 +171,7 @@ __global__ void output_overlap_chains_by_RLE(const Overlap* const overlaps,
                                              int32_t* const anchor_chain_starts,
                                              const uint32_t num_overlaps);
 
-std::vector<seed_debug_entry> read_minimap2_seed_chains(char* seed_file_name);
+std::vector<seed_debug_entry> read_minimap2_seed_chains(const char* const seed_file_name);
 
 } // namespace chainerutils
 } // namespace cudamapper

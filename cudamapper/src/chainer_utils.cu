@@ -221,7 +221,7 @@ std::vector<std::string> tokenize_line(std::string line, const char delim = '\t'
     return tokens;
 }
 
-std::vector<seed_debug_entry> read_minimap2_seed_chains(char* seed_file_name)
+std::vector<seed_debug_entry> read_minimap2_seed_chains(const char* const seed_file_name)
 {
 
     std::vector<seed_debug_entry> seeds;
