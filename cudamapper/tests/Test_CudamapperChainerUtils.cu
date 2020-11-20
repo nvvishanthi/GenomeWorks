@@ -283,9 +283,13 @@ TEST(TestChainerUtils, Test_Output_Overlap_Chains_By_RLE)
 
 TEST(TestChainerUtils, Test_Seed_Debug_Input)
 {
-    std::string debug_file("~/seed_debug.txt");
+    std::string debug_file("/home/edawson/seed_debug.txt");
     std::vector<chainerutils::seed_debug_entry> entries = chainerutils::read_minimap2_seed_chains(debug_file.c_str());
+    ASSERT_EQ(entries.size(), 1);
     ASSERT_STREQ(entries[0].query_id.c_str(), std::string("c7bbae11-7498-45a2-99bc-b03194889968").c_str());
+    ASSERT_EQ(entries[0].seeds[0].query_position_in_read_, 43);
+    ASSERT_EQ(entries[0].seeds.size(), 338);
+    ASSERT_EQ(entries[0].seeds[4].target_position_in_read_, 122);
 }
 
 TEST(TestChainerUtils, Test_Output_Overlap_Chains_By_Backtrace)

@@ -228,9 +228,9 @@ std::vector<seed_debug_entry> read_minimap2_seed_chains(const char* const seed_f
     int32_t q_id = 0;
 
     std::ifstream seed_file_stream;
-    seed_file_stream.open(seed_file_name, std::ios::in);
+    seed_file_stream.open(seed_file_name);
     std::string line;
-    if (seed_file_stream.is_open() && seed_file_stream.good())
+    if (seed_file_stream.good())
     {
 
         while (std::getline(seed_file_stream, line))
@@ -268,7 +268,6 @@ std::vector<seed_debug_entry> read_minimap2_seed_chains(const char* const seed_f
                 }
                 seeds.push_back(current);
             }
-            getline(seed_file_stream, line);
         }
 
         // Clear the current chain
