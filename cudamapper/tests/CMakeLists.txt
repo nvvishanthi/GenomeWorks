@@ -32,6 +32,7 @@ set(SOURCES
     Test_CudamapperChainerUtils.cu
    )
 
+
 get_property(cudamapper_data_include_dir GLOBAL PROPERTY cudamapper_data_include_dir)
 include_directories(${cudamapper_data_include_dir})
 

@@ -60,6 +60,8 @@ cuda_add_library(${MODULE_NAME}
         src/cudamapper_utils.cpp
         src/overlapper.cpp
         src/overlapper_triggered.cu
+        src/overlapper_anchmer.cu
+        src/overlapper_minimap.cu
         src/utils.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/version.cpp)
 
