@@ -48,15 +48,9 @@ namespace cudamapper
 namespace chainerutils
 {
 
-__device__ __forceinline__ Anchor empty_anchor()
-{
-    Anchor a;
-    a.query_read_id_           = UINT32_MAX;
-    a.query_position_in_read_  = UINT32_MAX;
-    a.target_read_id_          = UINT32_MAX;
-    a.target_position_in_read_ = UINT32_MAX;
-    return a;
-}
+#define BLOCK_COUNT 1792
+#define BLOCK_SIZE 64
+
 struct ConvertOverlapToNumResidues : public thrust::unary_function<Overlap, int32_t>
 {
     __host__ __device__ int32_t operator()(const Overlap& o) const
@@ -66,8 +60,31 @@ struct ConvertOverlapToNumResidues : public thrust::unary_function<Overlap, int3
 };
 
 __host__ __device__ Overlap create_overlap(const Anchor& start, const Anchor& end, const int32_t num_anchors)
-#define BLOCK_COUNT 1792
-#define BLOCK_SIZE 64
+{
+    Overlap overlap;
+    overlap.num_residues_ = num_anchors;
+
+    overlap.query_read_id_  = start.query_read_id_;
+    overlap.target_read_id_ = start.target_read_id_;
+    assert(start.query_read_id_ == end.query_read_id_ && start.target_read_id_ == end.target_read_id_);
+
+    overlap.query_start_position_in_read_ = min(start.query_position_in_read_, end.query_position_in_read_);
+    overlap.query_end_position_in_read_   = max(start.query_position_in_read_, end.query_position_in_read_);
+    bool is_negative_strand               = end.target_position_in_read_ < start.target_position_in_read_;
+    if (is_negative_strand)
+    {
+        overlap.relative_strand                = RelativeStrand::Reverse;
+        overlap.target_start_position_in_read_ = end.target_position_in_read_;
+        overlap.target_end_position_in_read_   = start.target_position_in_read_;
+    }
+    else
+    {
+        overlap.relative_strand                = RelativeStrand::Forward;
+        overlap.target_start_position_in_read_ = start.target_position_in_read_;
+        overlap.target_end_position_in_read_   = end.target_position_in_read_;
+    }
+    return overlap;
+}
 
 __device__ bool operator==(const QueryTargetPair& a, const QueryTargetPair& b)
 {
@@ -137,7 +154,7 @@ Overlap create_simple_overlap_cpu(const Anchor& start, const Anchor& end, const 
 // uninitialized variables in overlap struct.
 // This also has an upper bound on how many anchors we actually process. If num_anchors is greater
 // than 1792 * 32, we never actually process that anchor
-__global__ void backtrace_anchors_to_overlaps(const Anchor* anchors,
+__global__ void backtrace_anchors_to_overlaps_old(const Anchor* anchors,
                                               Overlap* overlaps,
                                               double* scores,
                                               bool* max_select_mask,
@@ -151,6 +168,50 @@ __global__ void backtrace_anchors_to_overlaps(const Anchor* anchors,
     {
         double score = scores[i];
         if (score >= min_score)
+        {
+            int32_t index                = i;
+            int32_t first_index          = index;
+            int32_t num_anchors_in_chain = 0;
+            Anchor final_anchor          = anchors[i];
+
+            while (index != -1)
+            {
+                first_index  = index;
+                int32_t pred = predecessors[index];
+                if (pred != -1)
+                {
+                    max_select_mask[pred] = false;
+                }
+                num_anchors_in_chain++;
+                index = predecessors[index];
+            }
+            Anchor first_anchor         = anchors[first_index];
+            overlaps[i]                 = create_overlap(first_anchor, final_anchor, num_anchors_in_chain);
+        }
+        else
+        {
+            max_select_mask[i]          = false;
+            overlaps[i]                 = create_overlap(empty_anchor(), empty_anchor(), 1);
+        }
+    }
+}
+
+// new backtrace function
+__global__ void backtrace_anchors_to_overlaps(const Anchor* const anchors,
+                                              Overlap* const overlaps,
+                                              int32_t* const overlap_terminal_anchors,
+                                              const float* const scores,
+                                              bool* const max_select_mask,
+                                              const int32_t* const predecessors,
+                                              const int64_t n_anchors,
+                                              const float min_score)
+{
+    const int64_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+    const int32_t stride    = blockDim.x * gridDim.x;
+
+    for (int i = thread_id; i < n_anchors; i += stride)
+    {
+        if (scores[i] >= min_score)
         {
             int32_t index                = i;
             int32_t first_index          = index;
@@ -260,6 +321,10 @@ __global__ void output_overlap_chains_by_RLE(const Overlap* const overlaps,
         for (int32_t index = chain_start; index < chain_start + chain_length; ++index)
         {
             anchor_chains[index] = index;
+        }
+    }
+}
+
 __global__ void backtrace_anchors_to_overlaps_debug(const Anchor* anchors,
                                                     Overlap* overlaps,
                                                     double* scores,
@@ -298,6 +363,7 @@ __global__ void backtrace_anchors_to_overlaps_debug(const Anchor* anchors,
         }
     }
 }
+
 void backtrace_anchors_to_overlaps_cpu(const Anchor* anchors,
                                        Overlap* overlaps,
                                        double* scores,
@@ -336,6 +402,7 @@ void backtrace_anchors_to_overlaps_cpu(const Anchor* anchors,
         }
     }
 }
+
 __global__ void convert_offsets_to_ends(std::int32_t* starts, std::int32_t* lengths, std::int32_t* ends, std::int32_t n_starts)
 {
     std::int32_t d_tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -451,6 +518,8 @@ std::vector<seed_debug_entry> read_minimap2_seed_chains(const char* const seed_f
 
     seed_file_stream.close();
     return seeds;
+}
+
 void encode_query_locations_from_anchors(const Anchor* anchors,
                                          int32_t n_anchors,
                                          device_buffer<int32_t>& query_starts,

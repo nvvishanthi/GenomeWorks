@@ -256,13 +256,23 @@ __device__ __forceinline__ Anchor empty_anchor()
 __device__ bool
 operator==(const QueryTargetPair& a, const QueryTargetPair& b);
 
-__global__ void backtrace_anchors_to_overlaps(const Anchor* anchors,
+// TODO VI: replace this function usage in get_overlaps in overlapper_minimap.cu
+__global__ void backtrace_anchors_to_overlaps_old(const Anchor* anchors,
                                               Overlap* overlaps,
                                               double* scores,
                                               bool* max_select_mask,
                                               int32_t* predecessors,
                                               const int32_t n_anchors,
                                               const int32_t min_score);
+
+__global__ void backtrace_anchors_to_overlaps(const Anchor* const anchors,
+                                              Overlap* const overlaps,
+                                              int32_t* const overlap_terminal_anchors,
+                                              const float* const scores,
+                                              bool* const max_select_mask,
+                                              const int32_t* const predecessors,
+                                              const int64_t n_anchors,
+                                              const float min_score);
 
 __global__ void backtrace_anchors_to_overlaps_debug(const Anchor* anchors,
                                                     Overlap* overlaps,
