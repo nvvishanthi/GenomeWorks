@@ -30,6 +30,7 @@ set(SOURCES
     Test_CudamapperOverlapperTriggered.cu
     Test_CudamapperUtilsKmerFunctions.cpp
     Test_CudamapperChainerUtils.cu
+    Test_CudamapperOverlapperMinimap.cu
    )
 
 

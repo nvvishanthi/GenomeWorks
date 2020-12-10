@@ -87,16 +87,27 @@ TEST(TestCumapperOverlapperMinimap, ChainingWithMM2Seeds)
     CudaStream cuda_stream           = make_cuda_stream();
 
     // TODO: Add a permanent mm2 seed file. Should live in cudamapper/data
-    std::string debug_file("../data/seeds_debug.txt");
+    std::string debug_file("../data/seed_debug_hg002_chr22_10521502.txt ");
     std::vector<chainerutils::seed_debug_entry> entries = chainerutils::read_minimap2_seed_chains(debug_file.c_str());
+
+    std::shared_ptr<io::FastaParser> query_parser;
+    std::shared_ptr<io::FastaParser> target_parser;
+    query_parser  = io::create_kseq_fasta_parser("../data/test_hg002_chr22_10521502.fq", 15 + 5 - 1); // defaults taken from application parser
+    target_parser = query_parser;                                                           // assume all to all
+
 
     for (auto const &entry : entries)
     {
-        auto overlapper = make_unique<OverlapperMiniMap>(alloctor, cuda_stream.get());
+        auto overlapper = std::make_unique<OverlapperMinimap>(allocator, cuda_stream.get());
         std::vector<Overlap> overlaps;
 
+        device_buffer<Anchor> d_anchors(entry.seeds.size(), allocator, cuda_stream.get());
+        
+        cudautils::device_copy_n(entry.seeds.data(), entry.seeds.size(), d_anchors.data(), cuda_stream.get());
+        
+
         overlapper->get_overlaps(overlaps,
-                                entry.seeds,
+                                d_anchors,
                                 false,
                                 30,
                                 30,
@@ -104,7 +115,9 @@ TEST(TestCumapperOverlapperMinimap, ChainingWithMM2Seeds)
                                 0.9);
         
         Overlapper::post_process_overlaps(overlaps);
+        ASSERT_EQ(overlaps.size(), entry.chains.size()); // Should this be a specific "set" of chains?
     }
+    
 
 }
 
